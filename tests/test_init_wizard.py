@@ -169,6 +169,35 @@ def test_init_prefilled_invalid_timezone_fails_fast(tmp_path):
     assert not paths.config_file.exists()
 
 
+def test_init_prefilled_invalid_backend_fails_fast(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, backend="gpt")),
+                check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+                now_utc=NOW)
+    assert code == 1
+    assert not paths.config_file.exists()
+
+
+def test_init_prefilled_invalid_backfill_days_fails_fast_before_any_write(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, backfill_days="-1")),
+                check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+                now_utc=NOW)
+    assert code == 1
+    assert not paths.config_file.exists()
+    assert not (tmp_path / "vault").exists()
+
+
+def test_init_prefilled_invalid_time_fails_fast_before_any_write(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, time="7am")),
+                check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+                now_utc=NOW)
+    assert code == 1
+    assert not paths.config_file.exists()
+    assert not (tmp_path / "vault").exists()
+
+
 def test_cmd_init_handles_eof_from_prompt(tmp_path, monkeypatch):
     def boom(*args, **kwargs):
         raise EOFError()

@@ -78,6 +78,24 @@ def _validate_backfill_days(value: str) -> int:
     return n
 
 
+def _fail_fast_preset(prompter: Prompter, key: str, question: str, default: str, validator,
+                      out) -> bool:
+    """Check a pre-filled (CLI flag) or --yes value against `validator` before
+    anything gets written. Returns True (after printing the message) if invalid.
+
+    Interactive answers are left alone here — `is_preset` is False for them, so
+    they get their normal re-ask chance later via `_ask_valid`.
+    """
+    if not prompter.is_preset(key):
+        return False
+    try:
+        validator(prompter.ask(key, question, default))
+    except ValueError as exc:
+        out(str(exc))
+        return True
+    return False
+
+
 def _ask_valid(prompter: Prompter, key: str, question: str, default: str, validator):
     """Ask for a value and validate it.
 
@@ -134,6 +152,15 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
         prev = load_config(paths, env)
     except ConfigError:
         prev = Config(vault_path=DEFAULT_VAULT, timezone=detect_timezone())
+
+    # Fail fast on invalid preset (flag/--yes) values before anything is written.
+    # Interactive answers still get their normal re-ask loop, below.
+    if _fail_fast_preset(prompter, "backfill_days", "Analyze how many past days now?", "7",
+                         _validate_backfill_days, out):
+        return 1
+    if _fail_fast_preset(prompter, "time", "Daily run time (HH:MM)?", prev.schedule_time,
+                         normalize_time, out):
+        return 1
 
     # 2-5. Questions
     vault = Path(prompter.ask("vault", "Where should the vault live?",
