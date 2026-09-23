@@ -28,4 +28,7 @@ packages = ["english_coach"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["integration: touches the real OS scheduler (opt-in via EC_SCHEDULER_IT=1)"]
+markers = [
+    "integration: touches the real OS scheduler (opt-in via EC_SCHEDULER_IT=1)",
+    "slow: builds the wheel",
+]
