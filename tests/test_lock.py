@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 
 import pytest
 
@@ -42,9 +44,29 @@ def test_stale_by_dead_pid_is_taken_over(tmp_path, monkeypatch):
 def test_corrupt_lock_is_stale(tmp_path):
     p = tmp_path / "run.lock"
     p.write_text("garbage")
+    # Set mtime well in the past so it's considered stale
+    os.utime(p, (1000.0, 1000.0))
     with lk.run_lock(p):
         pass
 
 
+def test_fresh_unreadable_lock_is_not_stale(tmp_path):
+    p = tmp_path / "run.lock"
+    # Write an empty lock file (unreadable but fresh)
+    p.write_text("")
+    with pytest.raises(lk.AlreadyRunning):
+        with lk.run_lock(p):
+            pass
+
+
 def test_pid_alive_for_self():
     assert lk.pid_alive(os.getpid()) is True
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows-only test")
+def test_pid_alive_for_dead_process():
+    # Start a process and wait for it to exit
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    # The process has exited; pid_alive should return False
+    assert lk.pid_alive(p.pid) is False
