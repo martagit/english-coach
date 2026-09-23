@@ -28,6 +28,13 @@ def test_app_paths_env_override(tmp_path):
     assert AppPaths.default({"ENGLISH_COACH_CONFIG_DIR": str(tmp_path)}).config_dir == tmp_path
 
 
+def test_app_paths_env_override_relative_becomes_absolute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = AppPaths.default({"ENGLISH_COACH_CONFIG_DIR": "relcfg"})
+    assert result.config_dir.is_absolute()
+    assert result.config_dir == (tmp_path / "relcfg").resolve()
+
+
 def test_save_then_load_round_trip(tmp_path):
     p = _paths(tmp_path)
     cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw", backend="api",

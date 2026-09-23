@@ -80,3 +80,21 @@ def test_main_rejects_partial_override(tmp_path):
     paths, _ = _setup(tmp_path)
     env = {"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}
     assert cli.main(["run", "--from", "2026-06-30"], env=env) == 1
+
+
+def test_execute_run_setup_failure_is_logged_and_recorded(tmp_path, monkeypatch):
+    # analyzer/source/runner construction (make_runner, ClaudeAnalyzer, TranscriptSource)
+    # must happen inside run_log()/try so a failure there still reaches coach.log
+    # and last_run.json instead of crashing a scheduled run silently.
+    paths = AppPaths(tmp_path / "cfg")
+    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw", backend="api")
+    save_config(paths, cfg)
+
+    def boom(*a, **k):
+        raise RuntimeError("bad api key")
+
+    monkeypatch.setattr(cli, "ClaudeAnalyzer", boom)
+    code, status = cli.execute_run(cfg, paths, env={}, now_utc=NOW)
+    assert (code, status) == (1, "error")
+    assert "bad api key" in paths.log_file.read_text(encoding="utf-8")
+    assert read_last_run(paths.last_run_file)["status"] == "error"

@@ -30,7 +30,7 @@ class AppPaths:
         env = os.environ if env is None else env
         override = env.get("ENGLISH_COACH_CONFIG_DIR")
         if override:
-            return cls(Path(override))
+            return cls(Path(override).expanduser().resolve())
         return cls(Path(platformdirs.user_config_dir(APP_NAME, appauthor=False, roaming=True)))
 
     @property

@@ -31,14 +31,14 @@ def execute_run(config: Config, paths: AppPaths, env: dict, *, backfill_days: in
                 override_from: date | None = None, override_to: date | None = None,
                 include_today: bool = False, now_utc: datetime | None = None,
                 analyzer=None, source=None, runner=None) -> tuple[int, str]:
-    runner = runner or make_runner(config, paths)
-    if analyzer is None:
-        analyzer = (ClaudeAnalyzer(config) if config.backend == "api"
-                    else ClaudeCliAnalyzer(config, runner=runner))
-    source = source or TranscriptSource(default_projects_dir(env), exclude_cwd=paths.workdir)
     prof = config.profile
     with run_log(paths.log_file):
         try:
+            runner = runner or make_runner(config, paths)
+            if analyzer is None:
+                analyzer = (ClaudeAnalyzer(config) if config.backend == "api"
+                            else ClaudeCliAnalyzer(config, runner=runner))
+            source = source or TranscriptSource(default_projects_dir(env), exclude_cwd=paths.workdir)
             with run_lock(paths.lock_file):
                 status = coach.run(
                     config, source, analyzer, now_utc=now_utc or datetime.now(timezone.utc),

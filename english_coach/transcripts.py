@@ -46,7 +46,9 @@ def _parse_ts(raw) -> datetime | None:
 
 
 def _same_dir(a, b) -> bool:
-    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+    # abspath (not resolve()) so a relative exclude_cwd matches an absolute cwd
+    # from Claude Code without raising if a path segment doesn't exist.
+    return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
 
 
 def prompt_from_entry(entry: dict, exclude_cwd: Path | None = None) -> UserPrompt | None:

@@ -68,6 +68,17 @@ def test_exclude_cwd_rejects_coach_own_calls(tmp_path):
     assert prompt_from_entry(e, exclude_cwd=tmp_path / "other") is not None
 
 
+def test_exclude_cwd_matches_relative_exclude_against_absolute_cwd(tmp_path, monkeypatch):
+    # Claude Code always writes an absolute cwd; a relative workdir (e.g. from
+    # an unresolved ENGLISH_COACH_CONFIG_DIR) must still be recognized as the
+    # same directory, or the coach would analyze its own CLI calls.
+    monkeypatch.chdir(tmp_path)
+    work = tmp_path / "workdir"
+    work.mkdir()
+    e = _entry(cwd=str(work))
+    assert prompt_from_entry(e, exclude_cwd=Path("workdir")) is None
+
+
 def test_read_prompts_filters_window_dedupes_and_sorts(tmp_path):
     proj = tmp_path / "projects"
     _write(proj / "C--a", "s1.jsonl", [
