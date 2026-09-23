@@ -1,7 +1,10 @@
+import argparse
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from english_coach import cli as cli_mod
+from english_coach import init_wizard as iw_mod
 from english_coach.config import AppPaths, load_config
 from english_coach.init_wizard import Prompter, init
 from english_coach.profile import Profile
@@ -110,3 +113,95 @@ def test_prompter_uses_input_and_default():
     p = Prompter(input_fn=lambda q: next(replies), out=lambda s: None)
     assert p.ask("a", "Vault?", "/v") == "/v"
     assert p.ask("b", "Language?", "") == "Spanish"
+
+
+def test_init_reasks_on_invalid_backfill_days(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    answers = _answers(tmp_path)
+    del answers["backfill_days"]
+    replies = iter(["abc", "3"])
+    lines = []
+    prompter = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
+    code = init(paths, _env(tmp_path), prompter, check_claude=lambda: None,
+                schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    assert rec.run_calls == [3]
+    assert any("non-negative whole number" in l for l in lines)
+
+
+def test_init_reasks_on_invalid_timezone(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    answers = _answers(tmp_path)
+    del answers["timezone"]
+    replies = iter(["Europe/Warsw", "Europe/Warsaw"])
+    lines = []
+    prompter = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
+    code = init(paths, _env(tmp_path), prompter, check_claude=lambda: None,
+                schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    cfg = load_config(paths, env={})
+    assert cfg.timezone == "Europe/Warsaw"
+    assert any("unknown timezone" in l for l in lines)
+
+
+def test_init_reasks_on_invalid_time(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    answers = _answers(tmp_path)
+    del answers["time"]
+    replies = iter(["7am", "7:30"])
+    lines = []
+    prompter = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
+    code = init(paths, _env(tmp_path), prompter, check_claude=lambda: None,
+                schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    cfg = load_config(paths, env={})
+    assert cfg.schedule_time == "07:30"
+    assert rec.schedule_calls == ["07:30"]
+    assert any("time must be HH:MM" in l for l in lines)
+
+
+def test_init_prefilled_invalid_timezone_fails_fast(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, timezone="Not/AZone")),
+                check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+                now_utc=NOW)
+    assert code == 1
+    assert not paths.config_file.exists()
+
+
+def test_cmd_init_handles_eof_from_prompt(tmp_path, monkeypatch):
+    def boom(*args, **kwargs):
+        raise EOFError()
+
+    monkeypatch.setattr(iw_mod, "init", boom)
+    paths = AppPaths(tmp_path / "cfg")
+    args = argparse.Namespace(vault=None, native_language=None, context=None, timezone=None,
+                              backend=None, backfill_days=None, time=None, no_schedule=False,
+                              yes=False)
+    code = cli_mod.cmd_init(args, paths, {})
+    assert code == 130
+
+
+def test_init_resolves_relative_vault_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, vault="myvault")),
+                check_claude=lambda: None, schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    cfg = load_config(paths, env={})
+    assert cfg.vault_path == (tmp_path / "myvault").resolve()
+    assert cfg.vault_path.is_absolute()
+
+
+def test_init_prints_message_when_first_run_fails(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    lines = []
+
+    def failing_run(config, paths, env, backfill_days):
+        return 1, "error"
+
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path), out=lines.append),
+                check_claude=lambda: None, schedule=Recorder().schedule, do_run=failing_run,
+                now_utc=NOW)
+    assert code == 0
+    assert any("First run failed" in l for l in lines)

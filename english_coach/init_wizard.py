@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import getpass
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from english_coach import scheduler
@@ -12,15 +13,17 @@ from english_coach.filtering import filter_prompts
 from english_coach.profile import Profile
 from english_coach.skeleton import create_skeleton
 from english_coach.transcripts import TranscriptSource, default_projects_dir
+from english_coach.validation import normalize_time, validate_timezone
 from english_coach.window import compute_window
 
 
 class Prompter:
     def __init__(self, answers: dict | None = None, assume_yes: bool = False,
-                 input_fn=input, out=print):
+                 input_fn=input, out=print, secret_fn=getpass.getpass):
         self._answers = answers or {}
         self._yes = assume_yes
         self._input = input_fn
+        self._secret = secret_fn
         self.out = out
 
     def ask(self, key: str, question: str, default: str) -> str:
@@ -31,6 +34,13 @@ class Prompter:
         reply = self._input(f"{question} [{default}]: ").strip()
         return reply or default
 
+    def ask_secret(self, key: str, question: str) -> str:
+        if key in self._answers and self._answers[key] is not None:
+            return str(self._answers[key])
+        if self._yes:
+            return ""
+        return self._secret(f"{question}: ")
+
     def confirm(self, key: str, question: str, default: bool = True) -> bool:
         if key in self._answers and self._answers[key] is not None:
             return bool(self._answers[key])
@@ -39,6 +49,10 @@ class Prompter:
         reply = self._input(f"{question} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
         return default if not reply else reply.startswith("y")
 
+    def is_preset(self, key: str) -> bool:
+        """True if `key` will resolve without prompting (pre-filled or --yes)."""
+        return (key in self._answers and self._answers[key] is not None) or self._yes
+
 
 def detect_timezone() -> str:
     try:
@@ -46,6 +60,41 @@ def detect_timezone() -> str:
         return get_localzone_name() or "UTC"
     except Exception:
         return "UTC"
+
+
+def _validate_backend(value: str) -> str:
+    if value not in ("cli", "api"):
+        raise ValueError(f"backend must be 'cli' or 'api', got {value!r}")
+    return value
+
+
+def _validate_backfill_days(value: str) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("backfill days must be a non-negative whole number")
+    if n < 0:
+        raise ValueError("backfill days must be a non-negative whole number")
+    return n
+
+
+def _ask_valid(prompter: Prompter, key: str, question: str, default: str, validator):
+    """Ask for a value and validate it.
+
+    A reply typed interactively gets a re-ask loop on ValueError. A value that came
+    from pre-filled answers (CLI flags) or --yes has no one to re-ask, so an invalid
+    value there is fatal: the message is printed and the ValueError re-raised for the
+    caller to turn into a failed `init()`.
+    """
+    non_interactive = prompter.is_preset(key)
+    while True:
+        raw = prompter.ask(key, question, default)
+        try:
+            return validator(raw)
+        except ValueError as exc:
+            prompter.out(str(exc))
+            if non_interactive:
+                raise
 
 
 def _default_check_claude(paths: AppPaths):
@@ -87,18 +136,20 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
         prev = Config(vault_path=DEFAULT_VAULT, timezone=detect_timezone())
 
     # 2-5. Questions
-    vault = Path(prompter.ask("vault", "Where should the vault live?", str(prev.vault_path))).expanduser()
+    vault = Path(prompter.ask("vault", "Where should the vault live?",
+                              str(prev.vault_path))).expanduser().resolve()
     lang = prompter.ask("native_language", "Your native language (blank to skip)?",
                         prev.profile.native_language)
     ctx = prompter.ask("context", "Your role / context, in a few words?", prev.profile.context)
-    tz = prompter.ask("timezone", "Timezone?", prev.timezone)
-    backend = prompter.ask("backend", "Backend: 'cli' (Claude Code login) or 'api' (API key)?",
-                           prev.backend)
-    if backend not in ("cli", "api"):
-        out(f"Unknown backend {backend!r}; using 'cli'.")
-        backend = "cli"
+    try:
+        tz = _ask_valid(prompter, "timezone", "Timezone?", prev.timezone, validate_timezone)
+        backend = _ask_valid(prompter, "backend",
+                             "Backend: 'cli' (Claude Code login) or 'api' (API key)?",
+                             prev.backend, _validate_backend)
+    except ValueError:
+        return 1
     if backend == "api" and not env.get("ANTHROPIC_API_KEY"):
-        key = prompter.ask("api_key", "Anthropic API key (or set ANTHROPIC_API_KEY)?", "")
+        key = prompter.ask_secret("api_key", "Anthropic API key (or set ANTHROPIC_API_KEY)")
         if key:
             save_api_key(paths, key)
 
@@ -113,7 +164,11 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
     out(f"Config saved to {paths.config_file}")
 
     # 7. First backfill
-    days = int(prompter.ask("backfill_days", "Analyze how many past days now?", "7"))
+    try:
+        days = _ask_valid(prompter, "backfill_days", "Analyze how many past days now?", "7",
+                          _validate_backfill_days)
+    except ValueError:
+        return 1
     if days > 0:
         w = compute_window(now_utc, None, config.timezone, backfill_days=days)
         found = filter_prompts(TranscriptSource(projects, exclude_cwd=paths.workdir)
@@ -122,9 +177,15 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
         if found and prompter.confirm("run_backfill", "Analyze them now (one Claude call)?", True):
             code, status = do_run(config, paths, env, days)
             out(f"First run: {status}")
+            if code != 0:
+                out(f"First run failed - see {paths.log_file} and run `english-coach doctor`.")
 
     # 8. Schedule
-    t = prompter.ask("time", "Daily run time (HH:MM)?", prev.schedule_time)
+    try:
+        t = _ask_valid(prompter, "time", "Daily run time (HH:MM)?", prev.schedule_time,
+                       normalize_time)
+    except ValueError:
+        return 1
     config = replace(config, schedule_time=t)
     save_config(paths, config)
     if prompter.confirm("schedule", "Register the daily job now?", True):

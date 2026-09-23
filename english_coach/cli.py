@@ -16,6 +16,7 @@ from english_coach.curator import curate
 from english_coach.lock import AlreadyRunning, run_lock
 from english_coach.runlog import run_log, write_last_run
 from english_coach.transcripts import TranscriptSource, default_projects_dir
+from english_coach.validation import normalize_time, validate_timezone
 
 
 def _parse_date(s: str | None) -> date | None:
@@ -105,10 +106,17 @@ def cmd_enrich(args, paths: AppPaths, env: dict) -> int:
 
 
 def _valid_time(s: str) -> str:
-    hh, mm = s.split(":")
-    if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
-        raise argparse.ArgumentTypeError("time must be HH:MM")
-    return f"{int(hh):02d}:{int(mm):02d}"
+    try:
+        return normalize_time(s)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _valid_timezone(s: str) -> str:
+    try:
+        return validate_timezone(s)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def cmd_schedule(args, paths: AppPaths, env: dict) -> int:
@@ -149,7 +157,11 @@ def cmd_init(args, paths: AppPaths, env: dict) -> int:
         "backfill_days": args.backfill_days, "time": args.time,
         "schedule": False if args.no_schedule else None,
     }
-    return init(paths, env, Prompter(answers, assume_yes=args.yes))
+    try:
+        return init(paths, env, Prompter(answers, assume_yes=args.yes))
+    except (KeyboardInterrupt, EOFError):
+        print("\nSetup cancelled. Re-run `english-coach init` to continue.", file=sys.stderr)
+        return 130
 
 
 def cmd_doctor(args, paths: AppPaths, env: dict) -> int:
@@ -196,7 +208,7 @@ def build_parser() -> argparse.ArgumentParser:
     ini.add_argument("--vault", default=None)
     ini.add_argument("--native-language", default=None)
     ini.add_argument("--context", default=None)
-    ini.add_argument("--timezone", default=None)
+    ini.add_argument("--timezone", type=_valid_timezone, default=None)
     ini.add_argument("--backend", choices=["cli", "api"], default=None)
     ini.add_argument("--backfill-days", type=int, default=None)
     ini.add_argument("--time", type=_valid_time, default=None)
