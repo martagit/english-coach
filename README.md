@@ -24,7 +24,22 @@ uv tool install git+https://github.com/<owner>/english-coach
 english-coach init
 ```
 
-Then open the vault folder in Obsidian; trust the Dataview plugin when asked.
+Then open the vault folder in Obsidian (see below).
+
+### First time in Obsidian
+
+The dashboard's tables are built by the [Dataview](https://github.com/blacksmithgu/obsidian-dataview)
+community plugin. You don't need to install it: `init` puts a copy into the vault
+(`.obsidian/plugins/dataview/`) and enables it.
+
+1. In Obsidian, choose **Open folder as vault** and pick the vault folder
+   (default `~/english-coach-vault`).
+2. Obsidian asks whether you trust the author of this vault, because it contains a community
+   plugin. Choose **Trust author and enable plugins**.
+3. Open **English Coaching.md**: the tables fill in after the first analyzed day.
+
+If you chose restricted mode instead, the dashboard shows raw `dataview` code blocks. Fix it
+under **Settings → Community plugins**: turn off *Restricted mode*, then switch **Dataview** on.
 
 ## How it works
 
