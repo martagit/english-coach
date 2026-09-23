@@ -141,6 +141,17 @@ def cmd_unschedule(args, paths: AppPaths, env: dict) -> int:
     return 0
 
 
+def cmd_init(args, paths: AppPaths, env: dict) -> int:
+    from english_coach.init_wizard import Prompter, init
+    answers = {
+        "vault": args.vault, "native_language": args.native_language, "context": args.context,
+        "timezone": args.timezone, "backend": args.backend,
+        "backfill_days": args.backfill_days, "time": args.time,
+        "schedule": False if args.no_schedule else None,
+    }
+    return init(paths, env, Prompter(answers, assume_yes=args.yes))
+
+
 def cmd_doctor(args, paths: AppPaths, env: dict) -> int:
     from english_coach.doctor import format_checks, run_checks
     checks = run_checks(paths, env, ping=args.ping)
@@ -179,6 +190,18 @@ def build_parser() -> argparse.ArgumentParser:
     doc = sub.add_parser("doctor", help="Check that everything is set up.")
     doc.add_argument("--ping", action="store_true", help="Also make a tiny test call to Claude.")
     doc.set_defaults(func=cmd_doctor)
+
+    ini = sub.add_parser("init", help="Set up config, vault, first run and daily schedule.")
+    ini.add_argument("--yes", action="store_true", help="Accept defaults without prompting.")
+    ini.add_argument("--vault", default=None)
+    ini.add_argument("--native-language", default=None)
+    ini.add_argument("--context", default=None)
+    ini.add_argument("--timezone", default=None)
+    ini.add_argument("--backend", choices=["cli", "api"], default=None)
+    ini.add_argument("--backfill-days", type=int, default=None)
+    ini.add_argument("--time", type=_valid_time, default=None)
+    ini.add_argument("--no-schedule", action="store_true")
+    ini.set_defaults(func=cmd_init)
     return parser
 
 
