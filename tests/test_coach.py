@@ -27,8 +27,9 @@ class FakeAnalyzer:
         self._analysis = analysis
         self.called = False
 
-    def analyze(self, prompts, phrasebook):
+    def analyze(self, prompts, phrasebook, known_patterns=()):
         self.called = True
+        self.known_patterns = list(known_patterns)
         return self._analysis
 
 

@@ -90,7 +90,6 @@ def write_daily_note(vault: Path, window: Window, prompt_count: int, analysis: A
 from datetime import date as _date
 
 from english_coach.frontmatter import read_note
-from english_coach.seed import KNOWN_PATTERNS, TAUGHT_IDIOMS
 
 
 def ensure_phrase_note(vault: Path, phrase: str, introduced: _date,
@@ -205,11 +204,18 @@ def append_pattern_examples(vault: Path, pattern: str,
         write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs))
 
 
-def seed_vault(vault: Path, introduced: _date) -> None:
-    for name, desc in KNOWN_PATTERNS:
-        ensure_pattern_note(vault, name, desc)
-    for idiom in TAUGHT_IDIOMS:
-        ensure_phrase_note(vault, idiom, introduced=introduced)
+def read_known_patterns(vault: Path) -> list[tuple[str, str]]:
+    """(name, rule) for every pattern note — the analyzer reuses these names verbatim."""
+    folder = Path(vault) / "Patterns"
+    if not folder.is_dir():
+        return []
+    out: list[tuple[str, str]] = []
+    for path in sorted(folder.glob("*.md")):
+        fm, body = read_note(path)
+        rule = _extract_rule(body)
+        out.append((fm.get("pattern") or path.stem,
+                    "" if rule == "(rule to be added)" else rule))
+    return out
 
 
 def write_quiet_note(vault: Path, window: Window) -> Path:

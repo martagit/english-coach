@@ -19,14 +19,55 @@ def test_tool_schema_names_expected_fields():
         assert field in props
 
 
-def test_build_prompt_includes_prompts_and_phrasebook():
+def test_build_prompt_includes_prompts_phrasebook_and_known_patterns():
     text = build_analysis_prompt(
         [UserPrompt("Why we need here the reference?", None)],
         [PhraseInfo("park it", "learning", 0)],
+        known_patterns=[("Articles", "a/an/the usage")],
     )
     assert "Why we need here the reference?" in text
     assert "park it" in text
-    assert "Articles" in text  # seeded known patterns are embedded
+    assert "- Articles: a/an/the usage" in text
+
+
+def test_build_prompt_without_known_patterns_says_none_yet():
+    text = build_analysis_prompt([UserPrompt("Hello team", None)], [])
+    assert "(none yet)" in text
+
+
+def test_prompts_use_profile_not_hardcoded_learner():
+    from english_coach.profile import Profile
+    from english_coach.analyzer import build_pattern_enrichment_prompt
+    from english_coach.curator import build_curation_prompt
+    prof = Profile("German", "QA engineer")
+    texts = [
+        build_analysis_prompt([UserPrompt("x y z", None)], [], profile=prof),
+        build_enrichment_prompt([{"phrase": "park it", "your_quote": None}], profile=prof),
+        build_pattern_enrichment_prompt([{"pattern": "Articles", "description": "", "examples": []}],
+                                        profile=prof),
+        build_curation_prompt([], 12, profile=prof),
+    ]
+    for t in texts:
+        assert "a German-native QA engineer" in t
+        assert "Polish" not in t and ".NET" not in t
+
+
+def test_run_claude_cli_passes_cwd(monkeypatch, tmp_path):
+    import english_coach.analyzer as az
+    seen = {}
+
+    class P:
+        returncode = 0
+        stdout = '{"result": "hi"}'
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        seen.update(kw)
+        return P()
+
+    monkeypatch.setattr(az.subprocess, "run", fake_run)
+    assert az.run_claude_cli("hello", cwd=tmp_path) == "hi"
+    assert seen["cwd"] == tmp_path
 
 
 def test_parse_analysis_maps_all_sections():
@@ -156,11 +197,11 @@ def test_cli_analyzer_handles_null_focus():
 
 # --- Phrase enrichment ------------------------------------------------------
 
-def test_build_enrichment_prompt_lists_phrases_and_dev_context():
+def test_build_enrichment_prompt_lists_phrases_and_work_context():
     p = build_enrichment_prompt([{"phrase": "park it", "your_quote": "let's park it"},
                                  {"phrase": "hoist", "your_quote": None}])
     assert "park it" in p and "hoist" in p
-    assert "code-review" in p  # dev context requested
+    assert "software developer" in p  # default profile working context requested
     assert "let's park it" in p  # the learner's real quote is hinted
 
 

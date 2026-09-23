@@ -5,17 +5,21 @@ from datetime import date as _date
 from pathlib import Path
 
 from english_coach.analyzer import run_claude_cli, extract_json_object
-
-_CURATOR_SYSTEM = (
-    "You curate a personal English phrasebook for a Polish-native .NET developer. "
-    "The learner can only actively practice a small set of phrases at a time. Decide which "
-    "phrases are 'active' (currently practicing) vs 'backlog' (parked for later), give each "
-    "a priority (1 = practice first .. 5 = someday), and a short theme label that groups "
-    "related phrases (e.g. 'hedging', 'code-review verbs', 'asking for changes')."
-)
+from english_coach.profile import Profile
 
 
-def build_curation_prompt(inventory: list[dict], max_active: int) -> str:
+def curator_system(profile: Profile) -> str:
+    return (
+        f"You curate a personal English phrasebook for {profile.learner()}. "
+        "The learner can only actively practice a small set of phrases at a time. Decide which "
+        "phrases are 'active' (currently practicing) vs 'backlog' (parked for later), give each "
+        "a priority (1 = practice first .. 5 = someday), and a short theme label that groups "
+        "related phrases (e.g. 'hedging', 'review feedback', 'asking for changes')."
+    )
+
+
+def build_curation_prompt(inventory: list[dict], max_active: int,
+                          profile: Profile = Profile()) -> str:
     lines = []
     for it in inventory:
         lines.append(
@@ -25,7 +29,7 @@ def build_curation_prompt(inventory: list[dict], max_active: int) -> str:
         )
     listing = "\n".join(lines)
     return (
-        f"{_CURATOR_SYSTEM}\n\n"
+        f"{curator_system(profile)}\n\n"
         "Rules:\n"
         f"- At most {max_active} phrases may be 'active'.\n"
         "- Keep current assignments stable: change a phrase's status/priority/theme only when "
@@ -96,7 +100,8 @@ def apply_guardrails(inventory: list[dict], decisions: list[dict],
     return updates
 
 
-def curate(vault: Path, runner=None, max_active: int = 12) -> int:
+def curate(vault: Path, runner=None, max_active: int = 12,
+          profile: Profile = Profile()) -> int:
     """One full curation pass over the vault's non-adopted phrases.
 
     Raises on LLM/parse failure — the caller decides fail-soft behavior.
@@ -107,7 +112,7 @@ def curate(vault: Path, runner=None, max_active: int = 12) -> int:
     if not inventory:
         return 0
     runner = runner or (lambda p: run_claude_cli(p))
-    prompt = build_curation_prompt(inventory, max_active)
+    prompt = build_curation_prompt(inventory, max_active, profile)
     text = runner(prompt)
     try:
         payload = extract_json_object(text)

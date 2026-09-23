@@ -2,7 +2,7 @@ from datetime import date
 from english_coach.models import Analysis, FocusPattern, BeforeAfter, Recurring, NewPhrase, Window
 from english_coach.vault import (
     ensure_phrase_note, ensure_pattern_note, append_pattern_examples,
-    seed_vault, write_quiet_note, apply_analysis_notes,
+    write_quiet_note, apply_analysis_notes,
     read_phrase_entries, write_enriched_phrase_note, enrich_phrase_notes,
 )
 from english_coach.frontmatter import read_note
@@ -36,11 +36,17 @@ def test_ensure_pattern_note_and_append(tmp_path):
     assert "07-05" in body  # short date tag
 
 
-def test_seed_vault_creates_patterns_and_phrases(tmp_path):
-    seed_vault(tmp_path, introduced=date(2026, 6, 30))
-    assert (tmp_path / "Patterns" / "Articles.md").exists()
-    assert (tmp_path / "Phrases" / "park it.md").exists()
-    assert (tmp_path / "Phrases" / "is it worth the churn.md").exists()  # sanitized
+def test_read_known_patterns_from_vault(tmp_path):
+    from english_coach.vault import read_known_patterns, ensure_pattern_note
+    ensure_pattern_note(tmp_path, "Articles", "a/an/the usage")
+    ensure_pattern_note(tmp_path, "Question formation")  # no rule yet
+    assert read_known_patterns(tmp_path) == [("Articles", "a/an/the usage"),
+                                             ("Question formation", "")]
+
+
+def test_read_known_patterns_empty_vault(tmp_path):
+    from english_coach.vault import read_known_patterns
+    assert read_known_patterns(tmp_path) == []
 
 
 def test_write_quiet_note(tmp_path):

@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from english_coach.profile import Profile
+
 
 @dataclass(frozen=True)
 class Config:
@@ -18,6 +20,7 @@ class Config:
     adopted_threshold: int = 3
     max_active: int = 12
     max_new_phrases: int = 2
+    profile: Profile = field(default_factory=Profile)
 
 
 def load_langfuse_creds(mcp_json_path: Path, env: dict) -> tuple[str, str, str]:

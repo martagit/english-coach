@@ -30,9 +30,6 @@ def run(config: Config, langfuse, analyzer, now_utc: datetime,
     # the watermark, so the next scheduled run still does the authoritative pass.
     no_advance = is_override or include_today
 
-    today_local_date = now_utc.astimezone(_zone(config)).date()
-    vault.seed_vault(config.vault_path, introduced=today_local_date)
-
     watermark = read_watermark(config.vault_path)
     window = compute_window(now_utc, watermark, config.timezone, backfill_days,
                             override_from, override_to, include_today)
@@ -55,7 +52,8 @@ def run(config: Config, langfuse, analyzer, now_utc: datetime,
         return "quiet"
 
     phrasebook = vault.read_phrasebook(config.vault_path)
-    analysis = analyzer.analyze(prompts, phrasebook)
+    known_patterns = vault.read_known_patterns(config.vault_path)
+    analysis = analyzer.analyze(prompts, phrasebook, known_patterns)
     vault.write_daily_note(config.vault_path, window, len(prompts), analysis)
     vault.apply_analysis_notes(config.vault_path, analysis, introduced=window.days[-1], day_label=label)
     vault.recompute_reuse(config.vault_path, config.adopted_threshold)

@@ -4,12 +4,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 
 from english_coach.config import Config
 from english_coach.models import (
     Analysis, Win, BeforeAfter, FocusPattern, Recurring, NewPhrase, UserPrompt, PhraseInfo,
 )
-from english_coach.seed import KNOWN_PATTERNS
+from english_coach.profile import Profile
 
 _BA = {"type": "object", "properties": {"before": {"type": "string"}, "after": {"type": "string"}},
        "required": ["before", "after"]}
@@ -42,22 +43,28 @@ ANALYSIS_TOOL = {
 
 _MAX_TOKENS = 8000
 
-_SYSTEM = (
-    "You are an encouraging English teacher for a Polish-native .NET developer who wants to "
-    "sound more fluent and natural in English. You analyze the developer's own Claude Code "
-    "prompts. Ground EVERY point in a direct quote of their actual words. Be concise and "
-    "developer-idiom aware. Never fabricate: if a section has nothing real, return it empty."
-)
+
+def system_prompt(profile: Profile) -> str:
+    hint = profile.interference_hint()
+    return (
+        f"You are an encouraging English teacher for {profile.learner()} who wants to "
+        "sound more fluent and natural in English. You analyze the learner's own Claude Code "
+        "prompts. Ground EVERY point in a direct quote of their actual words. Be concise and "
+        "aware of the idioms of their field. Never fabricate: if a section has nothing real, "
+        "return it empty." + (f" {hint}" if hint else "")
+    )
 
 
 def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
-                          max_new_phrases: int = 2) -> str:
-    patterns = "\n".join(f"- {name}: {desc}" for name, desc in KNOWN_PATTERNS)
+                          max_new_phrases: int = 2, known_patterns=(),
+                          profile: Profile = Profile()) -> str:
+    patterns = "\n".join(f"- {name}: {desc}" if desc else f"- {name}"
+                         for name, desc in known_patterns) or "- (none yet)"
     book = "\n".join(f"- {p.phrase} (status: {p.status}, reuse_count: {p.reuse_count})"
                      for p in phrasebook) or "- (empty)"
     joined = "\n\n".join(f"[{i + 1}] {p.text}" for i, p in enumerate(prompts))
     return (
-        f"{_SYSTEM}\n\n"
+        f"{system_prompt(profile)}\n\n"
         "Known recurring patterns for this user:\n"
         f"{patterns}\n\n"
         "Current phrasebook (taught phrases — detect which were reused today):\n"
@@ -67,10 +74,10 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
         "Analyze and call report_analysis. reused_phrases must be a subset of the phrasebook "
         "phrase names that the user actually reused correctly. Pick ONE highest-value focus_pattern.\n"
         "For every 'pattern' field (in focus_pattern and recurring), use the EXACT short name "
-        "from the 'Known recurring patterns' list above when it applies — e.g. \"Articles\", "
-        "\"Question formation\", \"Sense verb + adjective\" — copied verbatim, NOT expanded or "
-        "paraphrased into a sentence. Only coin a new short 2-4 word name if the issue is "
-        "genuinely not in that list. Put the detailed guidance in 'explanation', never in the name.\n"
+        "from the 'Known recurring patterns' list above when it applies — copied verbatim, NOT "
+        "expanded or paraphrased into a sentence. Only coin a new short 2-4 word name (e.g. "
+        "\"Articles\", \"Question formation\") if the issue is genuinely not in that list. Put "
+        "the detailed guidance in 'explanation', never in the name.\n"
         f"For new_phrases: propose AT MOST {max_new_phrases}, and only if genuinely high-value "
         "for this user — an empty list is a fine answer. Never re-teach anything already in the "
         "phrasebook above, including close variants of it."
@@ -105,8 +112,10 @@ class ClaudeAnalyzer:
             client = anthropic.Anthropic(api_key=config.anthropic_api_key)
         self._client = client
 
-    def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo]) -> Analysis:
-        prompt = build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases)
+    def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
+               known_patterns=()) -> Analysis:
+        prompt = build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases,
+                                       known_patterns, self._config.profile)
         message = self._client.messages.create(
             model=self._config.model,
             max_tokens=_MAX_TOKENS,
@@ -140,10 +149,10 @@ _CLI_JSON_INSTRUCTION = (
 
 
 def _resolve_claude() -> str:
-    """Locate the claude CLI even when PATH is stripped (e.g. under Task Scheduler).
+    """Locate the claude CLI even when PATH is stripped (e.g. under a scheduler).
 
     Order: ENGLISH_COACH_CLAUDE env override -> PATH -> the standard native-install
-    location %USERPROFILE%\\.local\\bin\\claude.exe -> bare "claude".
+    location ~/.local/bin/claude(.exe) -> bare "claude".
     """
     override = os.environ.get("ENGLISH_COACH_CLAUDE")
     if override:
@@ -151,18 +160,20 @@ def _resolve_claude() -> str:
     found = shutil.which("claude")
     if found:
         return found
-    guess = os.path.join(os.path.expanduser("~"), ".local", "bin", "claude.exe")
-    if os.path.exists(guess):
-        return guess
+    for name in ("claude.exe", "claude"):
+        guess = os.path.join(os.path.expanduser("~"), ".local", "bin", name)
+        if os.path.exists(guess):
+            return guess
     return "claude"
 
 
-def run_claude_cli(prompt: str, model: str | None = None, timeout: int = 300) -> str:
+def run_claude_cli(prompt: str, model: str | None = None, timeout: int = 300, cwd=None) -> str:
     """Run a one-shot `claude -p` and return the model's text reply.
 
     Pure text-in / JSON-out with no tools (`--allowedTools ""`), so no permission
     prompts. Forces UTF-8 decoding (Windows text mode would otherwise use cp1252
-    and mangle em-dashes/curly quotes).
+    and mangle em-dashes/curly quotes). `cwd` is the coach's own work dir, so the
+    transcript reader can exclude these calls from analysis.
     """
     cli = _resolve_claude()
     # Pass the prompt on STDIN, not as a CLI arg — Windows caps command lines at
@@ -170,8 +181,9 @@ def run_claude_cli(prompt: str, model: str | None = None, timeout: int = 300) ->
     cmd = [cli, "-p", "--output-format", "json", "--allowedTools", ""]
     if model:
         cmd += ["--model", model]
+    extra = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
     proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+                          encoding="utf-8", errors="replace", timeout=timeout, cwd=cwd, **extra)
     if proc.returncode != 0:
         raise RuntimeError(
             f"claude CLI failed (exit {proc.returncode}): {(proc.stderr or '').strip()[:500]}"
@@ -220,8 +232,11 @@ class ClaudeCliAnalyzer:
     def _default_runner(self, prompt: str) -> str:
         return run_claude_cli(prompt, model=self._model, timeout=self._timeout)
 
-    def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo]) -> Analysis:
-        prompt = build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases) + _CLI_JSON_INSTRUCTION
+    def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
+               known_patterns=()) -> Analysis:
+        prompt = (build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases,
+                                        known_patterns, self._config.profile)
+                 + _CLI_JSON_INSTRUCTION)
         text = self._runner(prompt)
         try:
             payload = extract_json_object(text)
@@ -234,16 +249,17 @@ class ClaudeCliAnalyzer:
 
 # --- Phrase enrichment (definition + dev-context sample usage) --------------
 
-_ENRICH_SYSTEM = (
-    "You write concise flashcard content for an English learner who is a Polish-native "
-    ".NET / backend developer at a software company. Definitions are one plain-English "
-    "sentence. Example sentences must sound natural in a software-development / code-review "
-    "context (C#, refactoring, pull requests, architecture, tests, DI) — the kind of thing "
-    "this developer would actually say to a teammate or in a PR comment."
-)
+def enrich_system(profile: Profile) -> str:
+    return (
+        f"You write concise flashcard content for an English learner who is {profile.learner()}. "
+        "Definitions are one plain-English sentence. Example sentences must sound natural in "
+        f"the learner's working context ({profile.work_context()}) — the kind of thing they would "
+        "actually say to a colleague or write in a work message."
+    )
 
 
-def build_enrichment_prompt(items: list[dict], examples_per_phrase: int = 3) -> str:
+def build_enrichment_prompt(items: list[dict], examples_per_phrase: int = 3,
+                            profile: Profile = Profile()) -> str:
     """items: [{"phrase": str, "your_quote": str | None}]."""
     lines = []
     for it in items:
@@ -252,10 +268,10 @@ def build_enrichment_prompt(items: list[dict], examples_per_phrase: int = 3) -> 
         lines.append(f"- {it['phrase']}{suffix}")
     listing = "\n".join(lines)
     return (
-        f"{_ENRICH_SYSTEM}\n\n"
+        f"{enrich_system(profile)}\n\n"
         f"For EACH phrase below, write a one-sentence definition and {examples_per_phrase} "
-        "example sentences in a software-development / code-review context. Do NOT reuse the "
-        "learner's own quoted sentence as an example — write fresh ones.\n\n"
+        f"example sentences in the learner's working context ({profile.work_context()}). Do NOT reuse "
+        "the learner's own quoted sentence as an example — write fresh ones.\n\n"
         f"Phrases:\n{listing}\n\n"
         "Output ONLY a single JSON object of exactly this shape — no prose, no markdown fences:\n"
         '{"phrases":[{"phrase":"<the phrase verbatim>","definition":"...","examples":["...","..."]}]}\n'
@@ -263,7 +279,8 @@ def build_enrichment_prompt(items: list[dict], examples_per_phrase: int = 3) -> 
     )
 
 
-def enrich_phrases(items: list[dict], runner=None, examples_per_phrase: int = 3) -> dict:
+def enrich_phrases(items: list[dict], runner=None, examples_per_phrase: int = 3,
+                   profile: Profile = Profile()) -> dict:
     """Return {phrase: {"definition": str, "examples": [str, ...]}} for the given phrases.
 
     `runner` is an injectable callable (prompt -> reply text); defaults to the
@@ -272,7 +289,7 @@ def enrich_phrases(items: list[dict], runner=None, examples_per_phrase: int = 3)
     if not items:
         return {}
     runner = runner or (lambda p: run_claude_cli(p))
-    prompt = build_enrichment_prompt(items, examples_per_phrase)
+    prompt = build_enrichment_prompt(items, examples_per_phrase, profile)
     text = runner(prompt)
     try:
         payload = extract_json_object(text)
@@ -287,14 +304,15 @@ def enrich_phrases(items: list[dict], runner=None, examples_per_phrase: int = 3)
     return out
 
 
-_PATTERN_SYSTEM = (
-    "You explain English grammar rules concisely for a Polish-native .NET / backend "
-    "developer. Each 'rule' is 1-2 plain-English sentences: state the rule and the specific "
-    "mistake to watch for. Ground it in the developer's own before/after fixes when given."
-)
+def pattern_system(profile: Profile) -> str:
+    return (
+        f"You explain English grammar rules concisely for {profile.learner()}. Each 'rule' is "
+        "1-2 plain-English sentences: state the rule and the specific mistake to watch for. "
+        "Ground it in the learner's own before/after fixes when given."
+    )
 
 
-def build_pattern_enrichment_prompt(items: list[dict]) -> str:
+def build_pattern_enrichment_prompt(items: list[dict], profile: Profile = Profile()) -> str:
     """items: [{"pattern": str, "description": str, "examples": [(before, after), ...]}]."""
     blocks = []
     for it in items:
@@ -306,7 +324,7 @@ def build_pattern_enrichment_prompt(items: list[dict]) -> str:
         )
     listing = "\n".join(blocks)
     return (
-        f"{_PATTERN_SYSTEM}\n\n"
+        f"{pattern_system(profile)}\n\n"
         "For EACH grammar pattern below, write a crisp 'rule' (1-2 sentences) that states the "
         "rule and the specific mistake to watch for, tailored to the examples.\n\n"
         f"Patterns:\n{listing}\n\n"
@@ -316,12 +334,12 @@ def build_pattern_enrichment_prompt(items: list[dict]) -> str:
     )
 
 
-def enrich_patterns(items: list[dict], runner=None) -> dict:
+def enrich_patterns(items: list[dict], runner=None, profile: Profile = Profile()) -> dict:
     """Return {pattern: {"rule": str}} for the given patterns. One batched call."""
     if not items:
         return {}
     runner = runner or (lambda p: run_claude_cli(p))
-    prompt = build_pattern_enrichment_prompt(items)
+    prompt = build_pattern_enrichment_prompt(items, profile)
     text = runner(prompt)
     try:
         payload = extract_json_object(text)
