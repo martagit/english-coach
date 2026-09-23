@@ -49,11 +49,15 @@ def _check_transcripts(env: dict) -> Check:
     return Check("transcripts", True, f"{len(files)} files in {d}; newest {newest:%Y-%m-%d %H:%M} UTC")
 
 
+def _default_ping(paths: AppPaths) -> None:
+    paths.workdir.mkdir(parents=True, exist_ok=True)  # the self-exclusion cwd must exist
+    run_claude_cli("Reply with the single word OK.", cwd=paths.workdir, timeout=60)
+
+
 def run_checks(paths: AppPaths, env: dict, *, ping: bool = False, which=_find_claude,
                sched_status=None, claude_ping=None, now: datetime | None = None) -> list[Check]:
     now = now or datetime.now(timezone.utc)
-    claude_ping = claude_ping or (lambda: run_claude_cli("Reply with the single word OK.",
-                                                         cwd=paths.workdir, timeout=60))
+    claude_ping = claude_ping or (lambda: _default_ping(paths))
     checks = [_check_claude(which, ping, claude_ping), _check_transcripts(env)]
 
     config = None
@@ -64,16 +68,19 @@ def run_checks(paths: AppPaths, env: dict, *, ping: bool = False, which=_find_cl
         checks.append(Check("config", False, str(exc)))
 
     if config is None:
-        checks.append(Check("vault", False, "No config — run `english-coach init`."))
+        checks.append(Check("vault", False, "No config - run `english-coach init`."))
     elif config.vault_path.is_dir():
         checks.append(Check("vault", True, str(config.vault_path)))
     else:
-        checks.append(Check("vault", False, f"{config.vault_path} missing — run `english-coach init`."))
+        checks.append(Check("vault", False, f"{config.vault_path} missing - run `english-coach init`."))
 
     try:
         st = (sched_status or scheduler.status)()
-        checks.append(Check("schedule", st.installed,
-                            st.detail if st.installed else f"{st.detail} Run `english-coach schedule`."))
+        if st.unavailable:  # e.g. Linux without systemd: we can't see a crontab entry
+            checks.append(Check("schedule", True, st.detail))
+        else:
+            checks.append(Check("schedule", st.installed,
+                                st.detail if st.installed else f"{st.detail} Run `english-coach schedule`."))
     except Exception as exc:
         checks.append(Check("schedule", False, f"Could not query the scheduler: {exc}"))
 
@@ -86,15 +93,18 @@ def run_checks(paths: AppPaths, env: dict, *, ping: bool = False, which=_find_cl
             detail = f"{last['status']} at {last['finished_at']}"
             if stats:
                 detail += (f"; {stats.get('prompts', 0)} prompts, "
-                           f"{stats.get('malformed', 0)} malformed lines of {stats.get('lines_read', 0)}")
+                           f"{stats.get('malformed', 0)} malformed and "
+                           f"{stats.get('unrecognized', 0)} unrecognized lines of "
+                           f"{stats.get('lines_read', 0)}")
             finished = datetime.fromisoformat(last["finished_at"])
             # Handle naive timestamps by treating them as UTC
             if finished.tzinfo is None:
                 finished = finished.replace(tzinfo=timezone.utc)
             ok = last["status"] != "error" and (now - finished).days <= _STALE_DAYS
-            if stats.get("lines_read") and stats.get("malformed", 0) > stats["lines_read"] * 0.2:
+            unreadable = stats.get("malformed", 0) + stats.get("unrecognized", 0)
+            if stats.get("lines_read") and unreadable > stats["lines_read"] * 0.2:
                 ok = False
-                detail += " — many unreadable lines; Claude Code's transcript format may have changed"
+                detail += " - many unreadable lines; Claude Code's transcript format may have changed"
             checks.append(Check("last run", ok, detail + f". Log: {paths.log_file}"))
         except (KeyError, TypeError, ValueError, AttributeError):
             checks.append(Check("last run", False,

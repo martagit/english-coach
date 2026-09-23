@@ -36,8 +36,8 @@ class Recorder:
 
 
 def _answers(tmp_path, **over):
-    a = {"vault": str(tmp_path / "vault"), "native_language": "Polish",
-         "context": "software developer", "timezone": "Europe/Warsaw", "backend": "cli",
+    a = {"vault": str(tmp_path / "vault"), "native_language": "Spanish",
+         "context": "software developer", "timezone": "Europe/Berlin", "backend": "cli",
          "backfill_days": "7", "run_backfill": True, "time": "07:00", "schedule": True}
     a.update(over)
     return a
@@ -50,8 +50,8 @@ def test_init_happy_path(tmp_path):
     assert code == 0
     cfg = load_config(paths, env={})
     assert cfg.vault_path == tmp_path / "vault"
-    assert cfg.profile == Profile("Polish", "software developer")
-    assert cfg.timezone == "Europe/Warsaw"
+    assert cfg.profile == Profile("Spanish", "software developer")
+    assert cfg.timezone == "Europe/Berlin"
     assert (tmp_path / "vault" / ".obsidian" / "plugins" / "dataview" / "main.js").exists()
     assert rec.run_calls == [7] and rec.schedule_calls == ["07:00"]
 
@@ -133,14 +133,14 @@ def test_init_reasks_on_invalid_timezone(tmp_path):
     paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
     answers = _answers(tmp_path)
     del answers["timezone"]
-    replies = iter(["Europe/Warsw", "Europe/Warsaw"])
+    replies = iter(["Europe/Berln", "Europe/Berlin"])
     lines = []
     prompter = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
     code = init(paths, _env(tmp_path), prompter, check_claude=lambda: None,
                 schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
     assert code == 0
     cfg = load_config(paths, env={})
-    assert cfg.timezone == "Europe/Warsaw"
+    assert cfg.timezone == "Europe/Berlin"
     assert any("unknown timezone" in l for l in lines)
 
 
@@ -234,3 +234,36 @@ def test_init_prints_message_when_first_run_fails(tmp_path):
                 now_utc=NOW)
     assert code == 0
     assert any("First run failed" in l for l in lines)
+
+
+def test_init_api_backend_offers_to_save_env_key(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    env = {**_env(tmp_path), "ANTHROPIC_API_KEY": "sk-ant-env"}
+    init(paths, env, Prompter(_answers(tmp_path, backend="api", save_api_key=True)),
+         check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+         now_utc=NOW)
+    assert load_config(paths, env={}).anthropic_api_key == "sk-ant-env"
+
+
+def test_init_api_backend_env_key_not_saved_when_declined(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    env = {**_env(tmp_path), "ANTHROPIC_API_KEY": "sk-ant-env"}
+    init(paths, env, Prompter(_answers(tmp_path, backend="api", save_api_key=False)),
+         check_claude=lambda: None, schedule=Recorder().schedule, do_run=Recorder().do_run,
+         now_utc=NOW)
+    assert not paths.secrets_file.exists()
+
+
+def test_init_default_schedule_passes_env(tmp_path, monkeypatch):
+    paths = AppPaths(tmp_path / "cfg")
+    env = _env(tmp_path)
+    seen = {}
+
+    def fake_install(t, log_dir, command=None, run=None, env=None):
+        seen["env"] = env
+        return "scheduled"
+
+    monkeypatch.setattr(iw_mod.scheduler, "install", fake_install)
+    init(paths, env, Prompter(_answers(tmp_path)), check_claude=lambda: None,
+         do_run=Recorder().do_run, now_utc=NOW)
+    assert seen["env"] is env

@@ -231,3 +231,75 @@ def test_cli_unschedule_reports_success_when_removed(tmp_path, monkeypatch, caps
     env = {"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}
     assert cli.main(["unschedule"], env=env) == 0
     assert "Removed the daily english-coach job." in capsys.readouterr().out
+
+
+# --- Scheduled command carries the user's environment --------------------------
+
+def test_scheduled_command_has_no_dir_flags_without_env():
+    from english_coach.scheduler import scheduled_command
+    cmd = scheduled_command({})
+    assert cmd[-2:] == ["english_coach", "run"]
+    assert "--config-dir" not in cmd and "--claude-config-dir" not in cmd
+
+
+def test_scheduled_command_adds_absolute_dir_flags_from_env(tmp_path, monkeypatch):
+    from english_coach.scheduler import scheduled_command
+    monkeypatch.chdir(tmp_path)
+    cmd = scheduled_command({"ENGLISH_COACH_CONFIG_DIR": "cfg", "CLAUDE_CONFIG_DIR": "claude"})
+    i, j = cmd.index("--config-dir"), cmd.index("--claude-config-dir")
+    assert Path(cmd[i + 1]) == (tmp_path / "cfg").resolve()
+    assert Path(cmd[j + 1]) == (tmp_path / "claude").resolve()
+    assert cmd[:cmd.index("run") + 1][-3:] == ["-m", "english_coach", "run"]
+
+
+def test_cli_schedule_passes_env_to_installed_command(tmp_path, monkeypatch):
+    from english_coach import cli, scheduler
+    from english_coach.config import AppPaths, Config, save_config
+    paths = AppPaths(tmp_path / "cfg")
+    save_config(paths, Config(vault_path=tmp_path / "v"))
+    seen = {}
+    monkeypatch.setattr(scheduler, "_backend", lambda: type("M", (), {
+        "__name__": "fake.windows",
+        "install": staticmethod(lambda t, command, run: seen.setdefault("cmd", command) and "ok")}))
+    env = {"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir),
+           "CLAUDE_CONFIG_DIR": str(tmp_path / "claude")}
+    assert cli.main(["schedule"], env=env) == 0
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--config-dir") + 1] == str(paths.config_dir.resolve())
+    assert cmd[cmd.index("--claude-config-dir") + 1] == str((tmp_path / "claude").resolve())
+
+
+class FlakyBootstrapRun(FakeRun):
+    """launchctl bootstrap fails `fails` times (e.g. right after bootout), then succeeds."""
+    def __init__(self, fails):
+        super().__init__()
+        self._fails = fails
+
+    def __call__(self, cmd, **kw):
+        self.calls.append(cmd)
+        rc = 0
+        if cmd[:2] == ["launchctl", "bootstrap"] and self._fails > 0:
+            self._fails -= 1
+            rc = 5
+        return subprocess.CompletedProcess(cmd, rc, "", "Bootstrap failed: 5: Input/output error")
+
+
+def _bootstraps(run):
+    return [c for c in run.calls if c[:2] == ["launchctl", "bootstrap"]]
+
+
+def test_macos_install_retries_bootstrap_after_bootout(tmp_path):
+    run, sleeps = FlakyBootstrapRun(fails=2), []
+    macos.install("07:00", tmp_path / "logs", POSIX_SPACEY, run=run, home=tmp_path, uid=501,
+                  sleep=sleeps.append)
+    assert len(_bootstraps(run)) == 3
+    assert sleeps == [1, 1]
+
+
+def test_macos_install_gives_up_after_three_bootstrap_attempts(tmp_path):
+    run, sleeps = FlakyBootstrapRun(fails=99), []
+    with pytest.raises(RuntimeError, match="launchctl bootstrap failed"):
+        macos.install("07:00", tmp_path / "logs", POSIX_SPACEY, run=run, home=tmp_path, uid=501,
+                      sleep=sleeps.append)
+    assert len(_bootstraps(run)) == 3
+    assert sleeps == [1, 1]

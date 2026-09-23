@@ -5,12 +5,13 @@ from datetime import date as _date
 from pathlib import Path
 
 from english_coach.analyzer import run_claude_cli, extract_json_object
+from english_coach.coach_prompts import CURATOR_PREAMBLE
 from english_coach.profile import Profile
 
 
 def curator_system(profile: Profile) -> str:
     return (
-        f"You curate a personal English phrasebook for {profile.learner()}. "
+        f"{CURATOR_PREAMBLE} for {profile.learner()}. "
         "The learner can only actively practice a small set of phrases at a time. Decide which "
         "phrases are 'active' (currently practicing) vs 'backlog' (parked for later), give each "
         "a priority (1 = practice first .. 5 = someday), and a short theme label that groups "

@@ -8,6 +8,7 @@ your English is a side effect of the work you were already doing.
 
 ## Screenshot
 
+<!-- add docs/dashboard.png before publishing -->
 ![English Coach dashboard](docs/dashboard.png)
 
 ## Requirements
@@ -43,18 +44,23 @@ API key (API backend). Nothing else leaves your machine.
 ## Cost
 
 With the default `cli` backend, analysis runs through `claude -p` and counts against your
-existing Claude subscription usage. With the `api` backend it uses API credits billed to your
-`ANTHROPIC_API_KEY`. Either way, set `model` in `config.toml` to a cheaper model if you want to
-reduce cost.
+existing Claude subscription usage. With the `api` backend the main daily analysis uses API
+credits billed to your `ANTHROPIC_API_KEY`. Either way, set `model` in `config.toml` to a
+cheaper model if you want to reduce cost.
+
+Phrase/pattern enrichment and curation always use the Claude Code CLI (`claude -p`), even with
+`backend = "api"` — only the main daily analysis uses the API. So even on the API backend you
+need Claude Code installed and logged in, and those small calls count against your Claude
+subscription usage.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `english-coach init` | Interactive setup: prerequisites, vault, learner profile, backend, first backfill, schedule. |
-| `english-coach run` | The daily job: analyzes completed days since the last run. Flags: `--backfill-days`, `--from`/`--to`, `--include-today`. |
+| `english-coach run` | The daily job: analyzes completed days since the last run. Flags: `--backfill-days`, `--from`/`--to`, `--include-today`, `--config-dir`, `--claude-config-dir`. |
 | `english-coach enrich` | Adds definitions/examples/rules to bare phrase and pattern notes. |
-| `english-coach doctor [--ping]` | Checks that everything is set up; `--ping` also makes a tiny test call to Claude. |
+| `english-coach doctor [--ping]` | Checks that everything is set up; `--ping` also makes a tiny test call to Claude (the only way it checks your login). |
 | `english-coach schedule [--time HH:MM]` | Registers (or updates) the daily OS job. |
 | `english-coach unschedule` | Removes the daily OS job. |
 
@@ -112,7 +118,11 @@ yourself instead of registering anything.
 
 Scheduled jobs capture your current `PATH` (so they can find `claude`) at the moment you run
 `schedule`. If you later move, reinstall, or upgrade `claude` to a new location, re-run
-`english-coach schedule` to refresh it.
+`english-coach schedule` to refresh it. If `ENGLISH_COACH_CONFIG_DIR` or `CLAUDE_CONFIG_DIR` is
+set when you run `schedule`, the job gets them as `run --config-dir` / `--claude-config-dir`
+flags, since scheduled jobs don't see your shell environment. For the same reason, with
+`backend = "api"`, `init` offers to save an `ANTHROPIC_API_KEY` from your shell to
+`secrets.toml` so scheduled runs can use it (the key is never written into scheduler files).
 
 ## Limits
 
@@ -123,9 +133,10 @@ producing empty days.
 
 ## Troubleshooting
 
-Run `english-coach doctor` (add `--ping` to also test a real Claude call). It checks that
-`claude` is on PATH and logged in, that transcripts exist, that the config and vault are
-valid, that the schedule is registered, and reports the last run's result. Logs live at
+Run `english-coach doctor`. It checks that `claude` is on PATH, that transcripts exist, that
+the config and vault are valid, that the schedule is registered, and reports the last run's
+result. Whether `claude` is actually logged in is checked only with `--ping`, which makes a
+tiny real Claude call. Logs live at
 `logs/coach.log` inside the config directory above.
 
 ## Uninstall

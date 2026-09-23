@@ -6,10 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from english_coach.coach_prompts import COACH_PROMPT_PREFIXES
 from english_coach.models import UserPrompt
 
-# Lines Claude Code writes as "user" but that the human did not type.
-_SKIP_PREFIXES = ("<command-", "<local-command-", "<system-reminder>")
+# Lines Claude Code writes as "user" but that the human did not type, plus the
+# coach's own `claude -p` prompts (second line of defence after the cwd check).
+_SKIP_PREFIXES = ("<command-", "<local-command-", "<system-reminder>") + COACH_PROMPT_PREFIXES
+# Content blocks a human can legitimately send without any text (e.g. a pasted screenshot).
+_NON_TEXT_BLOCKS = ("image", "document")
 
 
 @dataclass
@@ -18,6 +22,14 @@ class ReadStats:
     lines_read: int = 0
     malformed: int = 0
     prompts: int = 0
+    # "user" entries rejected only because message/content/timestamp was missing or
+    # had an unexpected shape - a sign Claude Code's transcript format changed.
+    unrecognized: int = 0
+
+    def summary(self) -> str:
+        return (f"Transcripts: {self.files_scanned} files, {self.lines_read} lines, "
+                f"{self.prompts} prompts, {self.malformed} malformed, "
+                f"{self.unrecognized} unrecognized.")
 
 
 def default_projects_dir(env: dict | None = None) -> Path:
@@ -27,14 +39,21 @@ def default_projects_dir(env: dict | None = None) -> Path:
 
 
 def _text_of(content) -> str | None:
+    """The typed text ("" when there is legitimately none, e.g. a tool result),
+    or None when `content` has a shape we don't recognize."""
     if isinstance(content, str):
         return content
-    if isinstance(content, list):
-        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+    if not isinstance(content, list):
+        return None
+    if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+        return ""
+    texts = [b.get("text") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+    if texts:
+        if not all(isinstance(t, str) for t in texts):
             return None
-        parts = [b.get("text", "") for b in content
-                 if isinstance(b, dict) and b.get("type") == "text"]
-        return "\n".join(p for p in parts if p) or None
+        return "\n".join(t for t in texts if t)
+    if all(isinstance(b, dict) and b.get("type") in _NON_TEXT_BLOCKS for b in content):
+        return ""  # includes an empty list
     return None
 
 
@@ -46,29 +65,38 @@ def _parse_ts(raw) -> datetime | None:
 
 
 def _same_dir(a, b) -> bool:
-    # abspath (not resolve()) so a relative exclude_cwd matches an absolute cwd
-    # from Claude Code without raising if a path segment doesn't exist.
-    return os.path.normcase(os.path.abspath(str(a))) == os.path.normcase(os.path.abspath(str(b)))
+    # realpath (not resolve()) never raises for missing paths, makes a relative
+    # exclude_cwd match Claude Code's absolute cwd, and sees through symlinks/junctions.
+    return (os.path.normcase(os.path.realpath(str(a)))
+            == os.path.normcase(os.path.realpath(str(b))))
+
+
+def _parse_entry(entry: dict, exclude_cwd: Path | None = None) -> tuple[UserPrompt | None, bool]:
+    """Return (prompt, unrecognized). `unrecognized` is True only for a "user"
+    entry that is not a legitimate skip but whose shape we couldn't read."""
+    if entry.get("type") != "user":
+        return None, False
+    if entry.get("isSidechain") or entry.get("isMeta") or entry.get("isCompactSummary"):
+        return None, False
+    cwd = entry.get("cwd")
+    if exclude_cwd is not None and cwd and _same_dir(cwd, exclude_cwd):
+        return None, False
+    msg = entry.get("message")
+    if not isinstance(msg, dict):
+        return None, True
+    text = _text_of(msg.get("content"))
+    if text is None:
+        return None, True
+    if not text.strip() or text.lstrip().startswith(_SKIP_PREFIXES):
+        return None, False
+    ts = _parse_ts(entry.get("timestamp"))
+    if ts is None:
+        return None, True
+    return UserPrompt(text=text, timestamp_utc=ts), False
 
 
 def prompt_from_entry(entry: dict, exclude_cwd: Path | None = None) -> UserPrompt | None:
-    if entry.get("type") != "user":
-        return None
-    if entry.get("isSidechain") or entry.get("isMeta") or entry.get("isCompactSummary"):
-        return None
-    cwd = entry.get("cwd")
-    if exclude_cwd is not None and cwd and _same_dir(cwd, exclude_cwd):
-        return None
-    msg = entry.get("message")
-    if not isinstance(msg, dict):
-        return None
-    text = _text_of(msg.get("content"))
-    if not text or not text.strip() or text.lstrip().startswith(_SKIP_PREFIXES):
-        return None
-    ts = _parse_ts(entry.get("timestamp"))
-    if ts is None:
-        return None
-    return UserPrompt(text=text, timestamp_utc=ts)
+    return _parse_entry(entry, exclude_cwd)[0]
 
 
 def read_prompts(projects_dir: Path, start_utc: datetime, end_utc: datetime,
@@ -104,7 +132,9 @@ def read_prompts(projects_dir: Path, start_utc: datetime, end_utc: datetime,
                     if not isinstance(entry, dict):
                         stats.malformed += 1
                         continue
-                    prompt = prompt_from_entry(entry, exclude_cwd)
+                    prompt, unrecognized = _parse_entry(entry, exclude_cwd)
+                    if unrecognized:
+                        stats.unrecognized += 1
                     if prompt is None or not (start_utc <= prompt.timestamp_utc <= end_utc):
                         continue
                     key = entry.get("uuid") or (entry.get("sessionId"), entry.get("timestamp"), prompt.text)

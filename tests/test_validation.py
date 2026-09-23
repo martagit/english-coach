@@ -21,9 +21,9 @@ def test_normalize_time_rejects_invalid(raw):
 
 
 def test_validate_timezone_accepts_valid():
-    assert validate_timezone("Europe/Warsaw") == "Europe/Warsaw"
+    assert validate_timezone("Europe/Berlin") == "Europe/Berlin"
 
 
 def test_validate_timezone_rejects_invalid():
-    with pytest.raises(ValueError, match=r"unknown timezone 'Europe/Warsw'"):
-        validate_timezone("Europe/Warsw")
+    with pytest.raises(ValueError, match=r"unknown timezone 'Europe/Berln'"):
+        validate_timezone("Europe/Berln")

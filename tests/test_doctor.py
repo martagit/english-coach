@@ -107,3 +107,53 @@ def test_scheduler_exception_is_handled(tmp_path):
     checks = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
                                  sched_status=bad_sched_status))
     assert not checks["schedule"].ok and "Could not query" in checks["schedule"].detail
+
+
+def test_many_unrecognized_entries_warn_about_format_change(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    (tmp_path / "vault").mkdir()
+    save_config(paths, Config(vault_path=tmp_path / "vault"))
+    # 5 malformed + 20 unrecognized of 100 lines = 25% -> format-change warning
+    write_last_run(paths.last_run_file, "quiet",
+                   ReadStats(files_scanned=3, lines_read=100, malformed=5, prompts=0,
+                             unrecognized=20))
+    last = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
+                               sched_status=lambda: ScheduleStatus(True, "")))["last run"]
+    assert not last.ok
+    assert "20 unrecognized" in last.detail
+    assert "format may have changed" in last.detail
+
+
+def test_schedule_is_informational_when_scheduler_unavailable(tmp_path, monkeypatch):
+    from english_coach.scheduler import linux
+    monkeypatch.setattr(linux.shutil, "which", lambda name: None)
+    st = linux.status()
+    assert st.unavailable and not st.installed
+    paths = AppPaths(tmp_path / "cfg")
+    sched = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
+                                sched_status=lambda: st))["schedule"]
+    assert sched.ok
+    assert sched.detail == ("systemd not available - if you use the crontab fallback, "
+                            "check `crontab -l`")
+
+
+def test_default_ping_creates_workdir_first(tmp_path, monkeypatch):
+    from english_coach import doctor
+    paths = AppPaths(tmp_path / "cfg")
+    seen = {}
+
+    def fake_cli(prompt, cwd=None, timeout=None, **kw):
+        seen["cwd_exists"] = cwd.is_dir()
+
+    monkeypatch.setattr(doctor, "run_claude_cli", fake_cli)
+    checks = _by_name(run_checks(paths, _env(tmp_path), ping=True, which=lambda n: "c",
+                                 sched_status=lambda: ScheduleStatus(True, "")))
+    assert checks["claude CLI"].ok
+    assert seen["cwd_exists"] is True
+
+
+def test_detail_strings_have_no_em_dashes(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    checks = run_checks(paths, {"CLAUDE_CONFIG_DIR": str(tmp_path / "none")}, which=lambda n: None,
+                        sched_status=lambda: ScheduleStatus(False, "x"))
+    assert "?" not in format_checks(checks)

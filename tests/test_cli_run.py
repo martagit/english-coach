@@ -26,7 +26,7 @@ class FakeAnalyzer:
 
 def _setup(tmp_path):
     paths = AppPaths(tmp_path / "cfg")
-    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw")
+    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Berlin")
     save_config(paths, cfg)
     return paths, cfg
 
@@ -87,7 +87,7 @@ def test_execute_run_setup_failure_is_logged_and_recorded(tmp_path, monkeypatch)
     # must happen inside run_log()/try so a failure there still reaches coach.log
     # and last_run.json instead of crashing a scheduled run silently.
     paths = AppPaths(tmp_path / "cfg")
-    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw", backend="api")
+    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Berlin", backend="api")
     save_config(paths, cfg)
 
     def boom(*a, **k):
@@ -98,3 +98,59 @@ def test_execute_run_setup_failure_is_logged_and_recorded(tmp_path, monkeypatch)
     assert (code, status) == (1, "error")
     assert "bad api key" in paths.log_file.read_text(encoding="utf-8")
     assert read_last_run(paths.last_run_file)["status"] == "error"
+
+
+def test_main_run_config_dir_flag_reads_that_config(tmp_path, monkeypatch):
+    paths, cfg = _setup(tmp_path)
+    seen = {}
+
+    def fake_execute_run(config, p, env, **kw):
+        seen.update(config=config, paths=p, env=env)
+        return 0, "empty"
+
+    monkeypatch.setattr(cli, "execute_run", fake_execute_run)
+    env = {"ENGLISH_COACH_CONFIG_DIR": str(tmp_path / "elsewhere")}
+    code = cli.main(["run", "--config-dir", str(paths.config_dir),
+                     "--claude-config-dir", str(tmp_path / "claude")], env=env)
+    assert code == 0
+    assert seen["config"].vault_path == cfg.vault_path
+    assert seen["paths"].config_dir == paths.config_dir.resolve()
+    assert seen["env"]["CLAUDE_CONFIG_DIR"] == str((tmp_path / "claude").resolve())
+
+
+def test_main_run_config_error_is_logged(tmp_path, capsys):
+    paths = AppPaths(tmp_path / "cfg")
+    paths.config_dir.mkdir(parents=True)
+    paths.config_file.write_text("vault_path = [", encoding="utf-8")  # invalid TOML
+    code = cli.main(["run", "--config-dir", str(paths.config_dir)], env={})
+    assert code == 1
+    assert "Config error" in capsys.readouterr().err
+    assert "Config error" in paths.log_file.read_text(encoding="utf-8")
+
+
+def test_empty_run_keeps_previous_stats(tmp_path):
+    from english_coach.runlog import write_last_run
+    from english_coach.state import write_watermark
+    from english_coach.transcripts import ReadStats
+    paths, cfg = _setup(tmp_path)
+    write_last_run(paths.last_run_file, "wrote:2026-07-04",
+                   ReadStats(files_scanned=2, lines_read=50, malformed=1, prompts=4, unrecognized=3))
+    write_watermark(cfg.vault_path, datetime(2026, 7, 5, 22, tzinfo=timezone.utc))  # nothing new
+    code, status = cli.execute_run(cfg, paths, env={}, now_utc=NOW, source=FakeSource([]),
+                                   analyzer=FakeAnalyzer())
+    assert (code, status) == (0, "empty")
+    last = read_last_run(paths.last_run_file)
+    assert last["status"] == "empty"
+    assert last["stats"] == {"files_scanned": 2, "lines_read": 50, "malformed": 1,
+                             "prompts": 4, "unrecognized": 3}
+
+
+def test_run_logs_transcript_stats_line(tmp_path):
+    from english_coach.transcripts import ReadStats
+    paths, cfg = _setup(tmp_path)
+    src = FakeSource([_prompt()])
+    src.last_stats = ReadStats(files_scanned=2, lines_read=30, malformed=1, prompts=1, unrecognized=4)
+    cli.execute_run(cfg, paths, env={}, now_utc=NOW, source=src, analyzer=FakeAnalyzer(),
+                    runner=lambda p: '{"phrases": []}')
+    assert ("Transcripts: 2 files, 30 lines, 1 prompts, 1 malformed, 4 unrecognized."
+            in paths.log_file.read_text(encoding="utf-8"))

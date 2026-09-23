@@ -6,6 +6,9 @@ import shutil
 import subprocess
 import sys
 
+from english_coach.coach_prompts import (  # noqa: F401  (COACH_PROMPT_PREFIXES re-exported)
+    ANALYSIS_PREAMBLE, COACH_PROMPT_PREFIXES, ENRICH_PREAMBLE, PATTERN_PREAMBLE,
+)
 from english_coach.config import Config
 from english_coach.models import (
     Analysis, Win, BeforeAfter, FocusPattern, Recurring, NewPhrase, UserPrompt, PhraseInfo,
@@ -47,7 +50,7 @@ _MAX_TOKENS = 8000
 def system_prompt(profile: Profile) -> str:
     hint = profile.interference_hint()
     return (
-        f"You are an encouraging English teacher for {profile.learner()} who wants to "
+        f"{ANALYSIS_PREAMBLE} {profile.learner()} who wants to "
         "sound more fluent and natural in English. You analyze the learner's own Claude Code "
         "prompts. Ground EVERY point in a direct quote of their actual words. Be concise and "
         "aware of the idioms of their field. Never fabricate: if a section has nothing real, "
@@ -251,7 +254,7 @@ class ClaudeCliAnalyzer:
 
 def enrich_system(profile: Profile) -> str:
     return (
-        f"You write concise flashcard content for an English learner who is {profile.learner()}. "
+        f"{ENRICH_PREAMBLE} for an English learner who is {profile.learner()}. "
         "Definitions are one plain-English sentence. Example sentences must sound natural in "
         f"the learner's working context ({profile.work_context()}) — the kind of thing they would "
         "actually say to a colleague or write in a work message."
@@ -306,7 +309,7 @@ def enrich_phrases(items: list[dict], runner=None, examples_per_phrase: int = 3,
 
 def pattern_system(profile: Profile) -> str:
     return (
-        f"You explain English grammar rules concisely for {profile.learner()}. Each 'rule' is "
+        f"{PATTERN_PREAMBLE} concisely for {profile.learner()}. Each 'rule' is "
         "1-2 plain-English sentences: state the rule and the specific mistake to watch for. "
         "Ground it in the learner's own before/after fixes when given."
     )

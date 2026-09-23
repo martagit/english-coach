@@ -10,6 +10,7 @@ import platformdirs
 import tomli_w
 
 from english_coach.profile import Profile
+from english_coach.validation import validate_timezone
 
 APP_NAME = "english-coach"
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -97,19 +98,31 @@ def load_config(paths: AppPaths, env: dict) -> Config:
     backend = data.get("backend", "cli")
     if backend not in _BACKENDS:
         raise ConfigError(f"{path}: backend must be one of {_BACKENDS}, got {backend!r}.")
+    try:
+        tz = validate_timezone(data.get("timezone", "UTC"))
+    except ValueError as exc:
+        raise ConfigError(f"{path}: timezone: {exc}") from exc
     prof = data.get("profile", {})
     lim = data.get("limits", {})
+
+    def limit(key: str, default: int) -> int:
+        try:
+            return int(lim.get(key, default))
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(f"{path}: limits.{key} must be a whole number, "
+                              f"got {lim.get(key)!r}.") from exc
+
     return Config(
         vault_path=Path(data["vault_path"]).expanduser(),
-        timezone=data.get("timezone", "UTC"),
+        timezone=tz,
         backend=backend,
         model=data.get("model", DEFAULT_MODEL),
         schedule_time=data.get("schedule_time", "07:00"),
         profile=Profile(prof.get("native_language", ""),
                         prof.get("context", Profile().context)),
-        adopted_threshold=int(lim.get("adopted_threshold", 3)),
-        max_active=int(lim.get("max_active", 12)),
-        max_new_phrases=int(lim.get("max_new_phrases", 2)),
+        adopted_threshold=limit("adopted_threshold", 3),
+        max_active=limit("max_active", 12),
+        max_new_phrases=limit("max_new_phrases", 2),
         anthropic_api_key=_api_key(paths, env),
     )
 

@@ -113,15 +113,15 @@ def test_files_untouched_since_window_start_are_skipped(tmp_path):
 
 
 def test_local_midnight_boundary_uses_window(tmp_path):
-    # 2026-07-05 23:30 Warsaw == 21:30 UTC -> belongs to Sunday 07-05.
-    # 2026-07-06 00:30 Warsaw == 22:30 UTC on 07-05 -> belongs to Monday (today), excluded.
+    # 2026-07-05 23:30 Berlin == 21:30 UTC -> belongs to Sunday 07-05.
+    # 2026-07-06 00:30 Berlin == 22:30 UTC on 07-05 -> belongs to Monday (today), excluded.
     proj = tmp_path / "projects"
     _write(proj / "C--a", "s.jsonl", [
         _entry("sunday late", "2026-07-05T21:30:00Z", uuid="1"),
         _entry("monday early", "2026-07-05T22:30:00Z", uuid="2"),
     ])
     now = datetime(2026, 7, 6, 5, tzinfo=timezone.utc)
-    w = compute_window(now, None, "Europe/Warsaw", backfill_days=1)
+    w = compute_window(now, None, "Europe/Berlin", backfill_days=1)
     assert w.days == [date(2026, 7, 5)]
     out = read_prompts(proj, w.start_utc, w.end_utc)
     assert [p.text for p in out] == ["sunday late"]
@@ -166,3 +166,75 @@ def test_unreadable_file_does_not_abort_scan(tmp_path, monkeypatch):
     assert [p.text for p in out] == ["from good file"]
     assert stats.malformed == 1
     assert stats.files_scanned == 2
+
+
+def test_unrecognized_user_entries_are_counted_but_legit_skips_are_not(tmp_path):
+    proj = tmp_path / "projects"
+    work = tmp_path / "workdir"
+    legit_skips = [
+        _entry("side", isSidechain=True, uuid="s1"),
+        _entry("meta", isMeta=True, uuid="s2"),
+        _entry("compact", isCompactSummary=True, uuid="s3"),
+        _entry(uuid="s4", message={"role": "user", "content": [
+            {"type": "tool_result", "content": "out"}]}),
+        _entry("<command-name>/clear</command-name>", uuid="s5"),
+        _entry("<system-reminder>x</system-reminder>", uuid="s6"),
+        _entry("self call", cwd=str(work), uuid="s7"),
+        _entry("   ", uuid="s8"),
+        {"type": "assistant", "message": "whatever"},
+    ]
+    unrecognized = [
+        {"type": "user", "uuid": "x1", "timestamp": "2026-07-05T09:00:00Z"},  # no message
+        _entry(uuid="x2", message="not a dict"),
+        _entry(uuid="x3", message={"role": "user"}),  # no content
+        _entry(uuid="x4", message={"role": "user", "content": 42}),
+        _entry(uuid="x5", message={"role": "user", "content": [{"type": "input_text", "text": "hi"}]}),
+        _entry("no timestamp", uuid="x6", timestamp=None),
+        _entry("bad timestamp", uuid="x7", ts="not-a-date"),
+    ]
+    _write(proj / "C--a", "s.jsonl", legit_skips + unrecognized + [_entry("real prompt", uuid="ok")])
+    stats = ReadStats()
+    out = read_prompts(proj, T0, T1, exclude_cwd=work, stats=stats)
+    assert [p.text for p in out] == ["real prompt"]
+    assert stats.unrecognized == len(unrecognized)
+    assert stats.malformed == 0
+
+
+def test_exclude_cwd_sees_through_symlinked_dir(tmp_path):
+    real = tmp_path / "real-workdir"
+    real.mkdir()
+    link = tmp_path / "link-workdir"
+    try:
+        os.symlink(real, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not permitted here")
+    e = _entry(cwd=str(link))
+    assert prompt_from_entry(e, exclude_cwd=real) is None
+
+
+def test_exclude_cwd_handles_missing_paths(tmp_path):
+    e = _entry(cwd=str(tmp_path / "gone" / "workdir"))
+    assert prompt_from_entry(e, exclude_cwd=tmp_path / "gone" / "workdir") is None
+    assert prompt_from_entry(e, exclude_cwd=tmp_path / "other") is not None
+
+
+def test_coach_own_prompts_are_skipped_even_from_another_cwd():
+    from english_coach.analyzer import (
+        COACH_PROMPT_PREFIXES, build_analysis_prompt, build_enrichment_prompt,
+        build_pattern_enrichment_prompt,
+    )
+    from english_coach.curator import build_curation_prompt
+    from english_coach.models import UserPrompt as UP
+    from english_coach.profile import Profile
+    prof = Profile("Spanish", "data analyst")
+    own = [
+        build_analysis_prompt([UP("hi", T0)], [], profile=prof),
+        build_enrichment_prompt([{"phrase": "park it", "your_quote": None}], profile=prof),
+        build_pattern_enrichment_prompt([{"pattern": "Articles", "description": "", "examples": []}],
+                                        profile=prof),
+        build_curation_prompt([], 12, profile=prof),
+    ]
+    for text in own:
+        assert text.startswith(COACH_PROMPT_PREFIXES)
+        assert prompt_from_entry(_entry(text=text)) is None
+    assert prompt_from_entry(_entry(text="You are right, let's rename it.")) is not None

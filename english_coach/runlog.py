@@ -4,7 +4,7 @@ import io
 import json
 import sys
 from contextlib import contextmanager
-from dataclasses import asdict
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,11 +55,12 @@ def run_log(log_file: Path):
 
 
 def write_last_run(path: Path, status: str, stats=None, now: datetime | None = None) -> None:
+    """`stats` is a ReadStats, an already-serialized dict (carried over), or None."""
     now = now or datetime.now(timezone.utc)
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"finished_at": now.isoformat(), "status": status,
-                                "stats": asdict(stats) if stats is not None else None},
+                                "stats": asdict(stats) if is_dataclass(stats) else stats},
                                indent=2), encoding="utf-8")
 
 

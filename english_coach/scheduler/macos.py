@@ -3,11 +3,13 @@ from __future__ import annotations
 import os
 import plistlib
 import subprocess
+import time
 from pathlib import Path
 
 from english_coach.scheduler import ScheduleStatus
 
 LABEL = "io.github.english-coach"
+_BOOTSTRAP_ATTEMPTS = 3
 
 
 def render_plist(command: list[str], time_hhmm: str, log_dir: Path,
@@ -32,7 +34,7 @@ def _agent_path(home: Path) -> Path:
 
 def install(time_hhmm: str, log_dir: Path, command: list[str], run=subprocess.run,
             home: Path | None = None, uid: int | None = None,
-            path_env: str | None = None) -> str:
+            path_env: str | None = None, sleep=time.sleep) -> str:
     home = Path(home or Path.home())
     uid = os.getuid() if uid is None else uid
     path_env = os.environ.get("PATH", "") if path_env is None else path_env
@@ -41,7 +43,15 @@ def install(time_hhmm: str, log_dir: Path, command: list[str], run=subprocess.ru
     Path(log_dir).mkdir(parents=True, exist_ok=True)
     agent.write_bytes(render_plist(command, time_hhmm, log_dir, path_env))
     run(["launchctl", "bootout", f"gui/{uid}/{LABEL}"], capture_output=True, text=True)
-    proc = run(["launchctl", "bootstrap", f"gui/{uid}", str(agent)], capture_output=True, text=True)
+    # bootout is asynchronous: bootstrap right after it can fail (e.g. "5: Input/output
+    # error") until launchd has finished unloading the old job, so retry briefly.
+    for attempt in range(_BOOTSTRAP_ATTEMPTS):
+        if attempt:
+            sleep(1)
+        proc = run(["launchctl", "bootstrap", f"gui/{uid}", str(agent)],
+                   capture_output=True, text=True)
+        if proc.returncode == 0:
+            break
     if proc.returncode != 0:
         raise RuntimeError(f"launchctl bootstrap failed: {(proc.stderr or proc.stdout).strip()}")
     return f"launchd: {agent} daily at {time_hhmm}, plus at login."

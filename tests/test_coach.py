@@ -7,7 +7,7 @@ from english_coach.state import read_watermark
 
 
 def _cfg(tmp_path):
-    return Config(vault_path=tmp_path, timezone="Europe/Warsaw")
+    return Config(vault_path=tmp_path, timezone="Europe/Berlin")
 
 
 def _p(text, ts="2026-07-05T09:00:00+00:00"):
@@ -116,3 +116,21 @@ def test_run_passes_vault_patterns_to_analyzer(tmp_path):
     analyzer = FakeAnalyzer(_empty_analysis())
     run(_cfg(tmp_path), FakeSource([_p("Why we need here the reference?")]), analyzer, now_utc=NOW)
     assert analyzer.known_patterns == [("Articles", "a/an/the usage")]
+
+
+def test_run_survives_enricher_failure_and_advances_watermark(tmp_path, capsys):
+    prompts = [_p("Why we need here the reference?", "2026-07-05T09:00:00+00:00")]
+
+    def boom(items):
+        raise RuntimeError("enrich LLM down")
+
+    from english_coach.vault import ensure_pattern_note, ensure_phrase_note
+    # bare notes so both enrichers get called
+    ensure_phrase_note(tmp_path, "park it", date(2026, 7, 1))
+    ensure_pattern_note(tmp_path, "Articles", "a/an/the usage")
+    status = run(_cfg(tmp_path), FakeSource(prompts), FakeAnalyzer(_empty_analysis()),
+                 now_utc=NOW, enricher=boom, pattern_enricher=boom)
+    assert status == "wrote:2026-07-05"
+    assert read_watermark(tmp_path) is not None
+    err = capsys.readouterr().err
+    assert err.count("Enrichment failed (skipped): enrich LLM down") == 2

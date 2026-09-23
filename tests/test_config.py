@@ -37,8 +37,8 @@ def test_app_paths_env_override_relative_becomes_absolute(tmp_path, monkeypatch)
 
 def test_save_then_load_round_trip(tmp_path):
     p = _paths(tmp_path)
-    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw", backend="api",
-                 schedule_time="06:30", profile=Profile("Polish", "tester"), max_active=8)
+    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Berlin", backend="api",
+                 schedule_time="06:30", profile=Profile("Spanish", "tester"), max_active=8)
     save_config(p, cfg)
     loaded = load_config(p, env={})
     assert loaded == cfg
@@ -96,3 +96,19 @@ def test_secrets_file_is_user_only(tmp_path):
     p = _paths(tmp_path)
     save_api_key(p, "sk-ant-x")
     assert (os.stat(p.secrets_file).st_mode & 0o777) == 0o600
+
+
+def test_invalid_timezone_rejected_naming_file_and_key(tmp_path):
+    paths = AppPaths(tmp_path)
+    paths.config_file.write_text('vault_path = "/v"\ntimezone = "Mars/Olympus"\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match=r"config\.toml.*timezone"):
+        load_config(paths, env={})
+
+
+@pytest.mark.parametrize("key", ["adopted_threshold", "max_active", "max_new_phrases"])
+def test_non_integer_limit_rejected_naming_file_and_key(tmp_path, key):
+    paths = AppPaths(tmp_path)
+    paths.config_file.write_text(f'vault_path = "/v"\n[limits]\n{key} = "lots"\n',
+                                 encoding="utf-8")
+    with pytest.raises(ConfigError, match=rf"config\.toml.*limits\.{key}"):
+        load_config(paths, env={})

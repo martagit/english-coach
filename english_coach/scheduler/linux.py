@@ -82,7 +82,9 @@ def remove(run=subprocess.run, config_home: Path | None = None) -> None:
 
 def status(run=subprocess.run) -> ScheduleStatus:
     if not shutil.which("systemctl"):
-        return ScheduleStatus(False, "systemd not available (check your crontab).")
+        return ScheduleStatus(
+            False, "systemd not available - if you use the crontab fallback, check `crontab -l`",
+            unavailable=True)
     proc = run(["systemctl", "--user", "is-enabled", f"{UNIT}.timer"], capture_output=True, text=True)
     if proc.returncode != 0:
         return ScheduleStatus(False, f"{UNIT}.timer not enabled.")

@@ -14,7 +14,7 @@ from english_coach.analyzer import (
 from english_coach.config import AppPaths, Config, ConfigError, load_config, save_config
 from english_coach.curator import curate
 from english_coach.lock import AlreadyRunning, run_lock
-from english_coach.runlog import run_log, write_last_run
+from english_coach.runlog import read_last_run, run_log, write_last_run
 from english_coach.transcripts import TranscriptSource, default_projects_dir
 from english_coach.validation import normalize_time, validate_timezone
 
@@ -57,7 +57,13 @@ def execute_run(config: Config, paths: AppPaths, env: dict, *, backfill_days: in
             print(f"Run failed: {exc}", file=sys.stderr)
             code, status = 1, "error"
     if status != "locked":
-        write_last_run(paths.last_run_file, status, getattr(source, "last_stats", None))
+        stats = getattr(source, "last_stats", None)
+        if status == "empty":
+            # Nothing was fetched: keep the last real read's stats so doctor's
+            # format-change signal survives quiet runs.
+            prev = read_last_run(paths.last_run_file)
+            stats = prev.get("stats") if isinstance(prev, dict) else None
+        write_last_run(paths.last_run_file, status, stats)
     return code, status
 
 
@@ -74,7 +80,13 @@ def cmd_run(args, paths: AppPaths, env: dict) -> int:
     if bool(args.from_date) != bool(args.to_date):
         print("Error: --from and --to must be given together.", file=sys.stderr)
         return 1
-    config = _load(paths, env, args)
+    try:
+        config = _load(paths, env, args)
+    except ConfigError as exc:
+        # A scheduled run has no terminal: record the failure where doctor points.
+        with run_log(paths.log_file):
+            print(f"Config error: {exc}", file=sys.stderr)
+        return 1
     code, _ = execute_run(config, paths, env, backfill_days=args.backfill_days,
                           override_from=_parse_date(args.from_date),
                           override_to=_parse_date(args.to_date),
@@ -125,7 +137,7 @@ def cmd_schedule(args, paths: AppPaths, env: dict) -> int:
         config = replace(config, schedule_time=args.time)
         save_config(paths, config)
     try:
-        print(scheduler.install(config.schedule_time, paths.log_file.parent))
+        print(scheduler.install(config.schedule_time, paths.log_file.parent, env=env))
         return 0
     except scheduler.SchedulerUnavailable as exc:
         print(str(exc))
@@ -185,6 +197,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--to", dest="to_date", default=None)
     run.add_argument("--include-today", action="store_true",
                      help="Also process today's prompts so far (does not advance the watermark).")
+    run.add_argument("--config-dir", default=None,
+                     help="Use this config directory (overrides ENGLISH_COACH_CONFIG_DIR).")
+    run.add_argument("--claude-config-dir", default=None,
+                     help="Claude Code config directory to read transcripts from "
+                          "(overrides CLAUDE_CONFIG_DIR).")
     run.set_defaults(func=cmd_run)
 
     enrich = sub.add_parser("enrich", help="Add definitions/examples/rules to bare notes.")
@@ -220,7 +237,14 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, env: dict | None = None) -> int:
     env = dict(os.environ) if env is None else env
     args = build_parser().parse_args(argv)
-    paths = AppPaths.default(env)
+    # `run --config-dir/--claude-config-dir` let the OS scheduler, which doesn't
+    # see the user's shell environment, reproduce the setup `schedule` saw.
+    if getattr(args, "claude_config_dir", None):
+        env = {**env, "CLAUDE_CONFIG_DIR": str(Path(args.claude_config_dir).expanduser().resolve())}
+    if getattr(args, "config_dir", None):
+        paths = AppPaths(Path(args.config_dir).expanduser().resolve())
+    else:
+        paths = AppPaths.default(env)
     try:
         return args.func(args, paths, env)
     except ConfigError as exc:

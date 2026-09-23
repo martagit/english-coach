@@ -131,7 +131,7 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
     out = prompter.out
     now_utc = now_utc or datetime.now(timezone.utc)
     check_claude = check_claude or (lambda: _default_check_claude(paths))
-    schedule = schedule or (lambda t, log_dir: scheduler.install(t, log_dir))
+    schedule = schedule or (lambda t, log_dir: scheduler.install(t, log_dir, env=env))
     do_run = do_run or _default_do_run
 
     # 1. Prerequisites
@@ -179,6 +179,11 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
         key = prompter.ask_secret("api_key", "Anthropic API key (or set ANTHROPIC_API_KEY)")
         if key:
             save_api_key(paths, key)
+    elif backend == "api" and prompter.confirm(
+            "save_api_key",
+            "ANTHROPIC_API_KEY is set in your shell. Also save it to secrets.toml so "
+            "scheduled runs, which don't see your shell environment, can use it?", True):
+        save_api_key(paths, env["ANTHROPIC_API_KEY"])
 
     config = replace(prev, vault_path=vault, timezone=tz, backend=backend,
                      profile=Profile(lang, ctx))

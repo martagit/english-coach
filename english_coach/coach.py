@@ -27,6 +27,9 @@ def run(config: Config, source, analyzer, now_utc: datetime,
         return "empty"
 
     prompts = filter_prompts(source.fetch_prompts(window.start_utc, window.end_utc))
+    stats = getattr(source, "last_stats", None)
+    if stats is not None:
+        print(stats.summary())
     label = note_basename(window.days)
 
     if not prompts:
@@ -47,19 +50,26 @@ def run(config: Config, source, analyzer, now_utc: datetime,
     vault.recompute_reuse(config.vault_path, config.adopted_threshold)
     _run_curator(curator)
     vault.write_dashboard(config.vault_path)
-    if enricher is not None:
-        # Give any newly-created (and still bare) phrase notes a definition + examples.
-        enriched = vault.enrich_phrase_notes(config.vault_path, enricher)
-        if enriched:
-            print(f"Enriched {enriched} new phrase note(s).")
-    if pattern_enricher is not None:
-        pe = vault.enrich_pattern_notes(config.vault_path, pattern_enricher)
-        if pe:
-            print(f"Enriched {pe} new pattern note(s).")
+    # Give any newly-created (and still bare) phrase/pattern notes content.
+    _run_enricher(vault.enrich_phrase_notes, config.vault_path, enricher, "phrase")
+    _run_enricher(vault.enrich_pattern_notes, config.vault_path, pattern_enricher, "pattern")
     if not no_advance:
         write_watermark(config.vault_path, window.end_utc)
     print(f"Wrote report for {label} ({len(prompts)} prompts).")
     return f"wrote:{label}"
+
+
+def _run_enricher(enrich_notes, vault_path, enricher, kind: str) -> None:
+    """Fail-soft: the daily note is already written, so an enrichment failure must
+    not stop the watermark from advancing (that would re-analyze the same days)."""
+    if enricher is None:
+        return
+    try:
+        n = enrich_notes(vault_path, enricher)
+        if n:
+            print(f"Enriched {n} new {kind} note(s).")
+    except Exception as exc:
+        print(f"Enrichment failed (skipped): {exc}", file=sys.stderr)
 
 
 def _run_curator(curator) -> None:
