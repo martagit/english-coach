@@ -267,3 +267,45 @@ def test_init_default_schedule_passes_env(tmp_path, monkeypatch):
     init(paths, env, Prompter(_answers(tmp_path)), check_claude=lambda: None,
          do_run=Recorder().do_run, now_utc=NOW)
     assert seen["env"] is env
+
+
+def test_init_reasks_on_tilde_username_vault(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    good = tmp_path / "vault"
+    replies = iter(["~english-coach-vault", str(good)])
+    answers = _answers(tmp_path)
+    del answers["vault"]
+    lines = []
+    p = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
+    code = init(paths, _env(tmp_path), p, check_claude=lambda: None,
+                schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    assert load_config(paths, env={}).vault_path == good.resolve()
+    assert any("~/english-coach-vault" in l for l in lines)
+
+
+def test_init_reasks_when_vault_cannot_be_created(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    blocker = tmp_path / "a-file"
+    blocker.write_text("x", encoding="utf-8")
+    good = tmp_path / "vault"
+    replies = iter([str(blocker / "vault"), str(good)])
+    answers = _answers(tmp_path)
+    del answers["vault"]
+    lines = []
+    p = Prompter(answers, input_fn=lambda q: next(replies), out=lines.append)
+    code = init(paths, _env(tmp_path), p, check_claude=lambda: None,
+                schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 0
+    assert load_config(paths, env={}).vault_path == good.resolve()
+    assert any("cannot create" in l for l in lines)
+
+
+def test_init_preset_uncreatable_vault_fails_without_config(tmp_path):
+    paths, rec = AppPaths(tmp_path / "cfg"), Recorder()
+    blocker = tmp_path / "a-file"
+    blocker.write_text("x", encoding="utf-8")
+    code = init(paths, _env(tmp_path), Prompter(_answers(tmp_path, vault=str(blocker / "v"))),
+                check_claude=lambda: None, schedule=rec.schedule, do_run=rec.do_run, now_utc=NOW)
+    assert code == 1
+    assert not paths.config_file.exists()

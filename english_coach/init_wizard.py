@@ -13,7 +13,7 @@ from english_coach.filtering import filter_prompts
 from english_coach.profile import Profile
 from english_coach.skeleton import create_skeleton
 from english_coach.transcripts import TranscriptSource, default_projects_dir
-from english_coach.validation import normalize_time, validate_timezone
+from english_coach.validation import normalize_time, validate_timezone, validate_vault_path
 from english_coach.window import compute_window
 
 
@@ -163,8 +163,11 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
         return 1
 
     # 2-5. Questions
-    vault = Path(prompter.ask("vault", "Where should the vault live?",
-                              str(prev.vault_path))).expanduser().resolve()
+    try:
+        vault = _ask_valid(prompter, "vault", "Where should the vault live?",
+                           str(prev.vault_path), validate_vault_path)
+    except ValueError:
+        return 1
     lang = prompter.ask("native_language", "Your native language (blank to skip)?",
                         prev.profile.native_language)
     ctx = prompter.ask("context", "Your role / context, in a few words?", prev.profile.context)
@@ -189,7 +192,12 @@ def init(paths: AppPaths, env: dict, prompter: Prompter, *, check_claude=None, s
                      profile=Profile(lang, ctx))
 
     # 6. Vault skeleton + config
-    for item in create_skeleton(vault):
+    try:
+        created = create_skeleton(vault)
+    except OSError as exc:
+        out(f"Could not set up the vault in {vault}: {exc}")
+        return 1
+    for item in created:
         out(f"  created {item}")
     save_config(paths, config)
     config = load_config(paths, env)  # picks up the saved API key
