@@ -87,28 +87,32 @@ def read_prompts(projects_dir: Path, start_utc: datetime, end_utc: datetime,
         except OSError:
             continue
         stats.files_scanned += 1
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line:
-                    continue
-                stats.lines_read += 1
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    stats.malformed += 1  # e.g. a line Claude Code is still writing
-                    continue
-                if not isinstance(entry, dict):
-                    stats.malformed += 1
-                    continue
-                prompt = prompt_from_entry(entry, exclude_cwd)
-                if prompt is None or not (start_utc <= prompt.timestamp_utc <= end_utc):
-                    continue
-                key = entry.get("uuid") or (entry.get("sessionId"), entry.get("timestamp"), prompt.text)
-                if key in seen:
-                    continue  # resumed/forked sessions replay history
-                seen.add(key)
-                out.append(prompt)
+        try:
+            with path.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    stats.lines_read += 1
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        stats.malformed += 1  # e.g. a line Claude Code is still writing
+                        continue
+                    if not isinstance(entry, dict):
+                        stats.malformed += 1
+                        continue
+                    prompt = prompt_from_entry(entry, exclude_cwd)
+                    if prompt is None or not (start_utc <= prompt.timestamp_utc <= end_utc):
+                        continue
+                    key = entry.get("uuid") or (entry.get("sessionId"), entry.get("timestamp"), prompt.text)
+                    if key in seen:
+                        continue  # resumed/forked sessions replay history
+                    seen.add(key)
+                    out.append(prompt)
+        except OSError:
+            stats.malformed += 1  # e.g. file deleted, locked, or permission denied
+            continue
     out.sort(key=lambda p: p.timestamp_utc)
     stats.prompts = len(out)
     return out

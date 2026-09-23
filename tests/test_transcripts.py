@@ -132,3 +132,26 @@ def test_transcript_source_records_stats(tmp_path):
     src = TranscriptSource(proj)
     assert [p.text for p in src.fetch_prompts(T0, T1)] == ["hello there"]
     assert src.last_stats.prompts == 1
+
+
+def test_unreadable_file_does_not_abort_scan(tmp_path, monkeypatch):
+    proj = tmp_path / "projects"
+    good_file = _write(proj / "C--a", "good.jsonl", [_entry("from good file")])
+    bad_file = _write(proj / "C--b", "bad.jsonl", [_entry("from bad file")])
+
+    # Make bad_file raise PermissionError when opened
+    original_open = Path.open
+    def open_with_error(self, *args, **kwargs):
+        if self == bad_file:
+            raise PermissionError("Access denied")
+        return original_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", open_with_error)
+
+    stats = ReadStats()
+    out = read_prompts(proj, T0, T1, stats=stats)
+
+    # Should still get prompt from good file, and malformed count should be 1 for the bad file
+    assert [p.text for p in out] == ["from good file"]
+    assert stats.malformed == 1
+    assert stats.files_scanned == 2
