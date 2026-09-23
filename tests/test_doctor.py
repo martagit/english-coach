@@ -68,3 +68,42 @@ def test_ping_failure_is_reported(tmp_path):
 def test_format_is_ascii():
     out = format_checks([Check("a", True, "fine"), Check("b", False, "broken")])
     assert out.isascii() and "[OK]" in out and "[FAIL]" in out
+
+
+def test_last_run_with_foreign_json_shape(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    (tmp_path / "vault").mkdir()
+    save_config(paths, Config(vault_path=tmp_path / "vault"))
+    paths.last_run_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.last_run_file.write_text("{\"unexpected\": \"shape\"}", encoding="utf-8")
+    last = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
+                               sched_status=lambda: ScheduleStatus(True, "")))["last run"]
+    assert not last.ok and "malformed" in last.detail
+
+
+def test_last_run_with_naive_timestamp(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    (tmp_path / "vault").mkdir()
+    save_config(paths, Config(vault_path=tmp_path / "vault"))
+    naive_time = datetime(2026, 7, 5, 10, 0, 0)  # naive datetime
+    write_last_run(paths.last_run_file, "wrote:2026-07-05", ReadStats(1, 2, 0, 1),
+                   now=naive_time)
+    # Pass a now that's close to the naive timestamp so it's not stale
+    checks = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
+                                 sched_status=lambda: ScheduleStatus(True, ""),
+                                 now=datetime(2026, 7, 5, 10, 30, 0, tzinfo=timezone.utc)))
+    assert checks["last run"].ok
+
+
+def test_scheduler_exception_is_handled(tmp_path):
+    paths = AppPaths(tmp_path / "cfg")
+    (tmp_path / "vault").mkdir()
+    save_config(paths, Config(vault_path=tmp_path / "vault"))
+    write_last_run(paths.last_run_file, "wrote:2026-07-05", ReadStats(1, 2, 0, 1))
+
+    def bad_sched_status():
+        raise FileNotFoundError("schtasks not found")
+
+    checks = _by_name(run_checks(paths, _env(tmp_path), which=lambda n: "c",
+                                 sched_status=bad_sched_status))
+    assert not checks["schedule"].ok and "Could not query" in checks["schedule"].detail

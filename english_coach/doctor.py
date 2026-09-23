@@ -38,7 +38,7 @@ def _check_claude(which, ping: bool, claude_ping) -> Check:
     return Check("claude CLI", True, path)
 
 
-def _check_transcripts(env: dict, now: datetime) -> Check:
+def _check_transcripts(env: dict) -> Check:
     d = default_projects_dir(env)
     if not d.is_dir():
         return Check("transcripts", False, f"{d} does not exist. Use Claude Code at least once.")
@@ -54,7 +54,7 @@ def run_checks(paths: AppPaths, env: dict, *, ping: bool = False, which=_find_cl
     now = now or datetime.now(timezone.utc)
     claude_ping = claude_ping or (lambda: run_claude_cli("Reply with the single word OK.",
                                                          cwd=paths.workdir, timeout=60))
-    checks = [_check_claude(which, ping, claude_ping), _check_transcripts(env, now)]
+    checks = [_check_claude(which, ping, claude_ping), _check_transcripts(env)]
 
     config = None
     try:
@@ -70,25 +70,35 @@ def run_checks(paths: AppPaths, env: dict, *, ping: bool = False, which=_find_cl
     else:
         checks.append(Check("vault", False, f"{config.vault_path} missing — run `english-coach init`."))
 
-    st = (sched_status or scheduler.status)()
-    checks.append(Check("schedule", st.installed,
-                        st.detail if st.installed else f"{st.detail} Run `english-coach schedule`."))
+    try:
+        st = (sched_status or scheduler.status)()
+        checks.append(Check("schedule", st.installed,
+                            st.detail if st.installed else f"{st.detail} Run `english-coach schedule`."))
+    except Exception as exc:
+        checks.append(Check("schedule", False, f"Could not query the scheduler: {exc}"))
 
     last = read_last_run(paths.last_run_file)
     if last is None:
         checks.append(Check("last run", False, "Never ran. Try `english-coach run`."))
     else:
-        stats = last.get("stats") or {}
-        detail = f"{last['status']} at {last['finished_at']}"
-        if stats:
-            detail += (f"; {stats.get('prompts', 0)} prompts, "
-                       f"{stats.get('malformed', 0)} malformed lines of {stats.get('lines_read', 0)}")
-        finished = datetime.fromisoformat(last["finished_at"])
-        ok = last["status"] != "error" and (now - finished).days <= _STALE_DAYS
-        if stats.get("lines_read") and stats.get("malformed", 0) > stats["lines_read"] * 0.2:
-            ok = False
-            detail += " — many unreadable lines; Claude Code's transcript format may have changed"
-        checks.append(Check("last run", ok, detail + f". Log: {paths.log_file}"))
+        try:
+            stats = last.get("stats") or {}
+            detail = f"{last['status']} at {last['finished_at']}"
+            if stats:
+                detail += (f"; {stats.get('prompts', 0)} prompts, "
+                           f"{stats.get('malformed', 0)} malformed lines of {stats.get('lines_read', 0)}")
+            finished = datetime.fromisoformat(last["finished_at"])
+            # Handle naive timestamps by treating them as UTC
+            if finished.tzinfo is None:
+                finished = finished.replace(tzinfo=timezone.utc)
+            ok = last["status"] != "error" and (now - finished).days <= _STALE_DAYS
+            if stats.get("lines_read") and stats.get("malformed", 0) > stats["lines_read"] * 0.2:
+                ok = False
+                detail += " — many unreadable lines; Claude Code's transcript format may have changed"
+            checks.append(Check("last run", ok, detail + f". Log: {paths.log_file}"))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            checks.append(Check("last run", False,
+                               f"{paths.last_run_file} is unreadable or malformed. Try `english-coach run`."))
     return checks
 
 
