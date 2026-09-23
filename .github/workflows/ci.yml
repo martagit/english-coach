@@ -1,0 +1,24 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - run: uv sync
+      - run: uv run pytest -q
+      - name: Real Task Scheduler round-trip
+        if: runner.os == 'Windows'
+        env:
+          EC_SCHEDULER_IT: "1"
+        run: uv run pytest tests/test_scheduler.py -m integration -q
