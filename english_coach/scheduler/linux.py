@@ -16,9 +16,11 @@ def _sd_quote(arg: str) -> str:
     return f'"{escaped}"'
 
 
-def render_service(command: list[str]) -> str:
+def render_service(command: list[str], path_env: str | None = None) -> str:
+    env_line = f"Environment={_sd_quote('PATH=' + path_env)}\n" if path_env else ""
     return ("[Unit]\nDescription=English Coach daily run\n\n"
             "[Service]\nType=oneshot\n"
+            f"{env_line}"
             f"ExecStart={' '.join(_sd_quote(a) for a in command)}\n")
 
 
@@ -28,10 +30,11 @@ def render_timer(time_hhmm: str) -> str:
             "[Install]\nWantedBy=timers.target\n")
 
 
-def render_crontab(command: list[str], time_hhmm: str) -> str:
+def render_crontab(command: list[str], time_hhmm: str, path_env: str | None = None) -> str:
     hour, minute = (int(x) for x in time_hhmm.split(":"))
     cmd = " ".join(shlex.quote(a) for a in command)
-    return f"{minute} {hour} * * * {cmd}\n@reboot sleep 300 && {cmd}\n"
+    prefix = f"PATH={path_env}\n" if path_env else ""
+    return f"{prefix}{minute} {hour} * * * {cmd}\n@reboot sleep 300 && {cmd}\n"
 
 
 def _config_home() -> Path:
@@ -46,15 +49,17 @@ def systemd_available(run=subprocess.run) -> bool:
 
 
 def install(time_hhmm: str, command: list[str], run=subprocess.run,
-            config_home: Path | None = None, systemd_ok: bool | None = None) -> str:
+            config_home: Path | None = None, systemd_ok: bool | None = None,
+            path_env: str | None = None) -> str:
+    path_env = os.environ.get("PATH", "") if path_env is None else path_env
     ok = systemd_available(run) if systemd_ok is None else systemd_ok
     if not ok:
         raise SchedulerUnavailable(
             "systemd user timers are not available. Add these lines with `crontab -e`:\n"
-            + render_crontab(command, time_hhmm))
+            + render_crontab(command, time_hhmm, path_env))
     unit_dir = Path(config_home or _config_home()) / "systemd" / "user"
     unit_dir.mkdir(parents=True, exist_ok=True)
-    (unit_dir / f"{UNIT}.service").write_text(render_service(command), encoding="utf-8")
+    (unit_dir / f"{UNIT}.service").write_text(render_service(command, path_env), encoding="utf-8")
     (unit_dir / f"{UNIT}.timer").write_text(render_timer(time_hhmm), encoding="utf-8")
     run(["systemctl", "--user", "daemon-reload"], capture_output=True, text=True)
     proc = run(["systemctl", "--user", "enable", "--now", f"{UNIT}.timer"],
@@ -65,6 +70,9 @@ def install(time_hhmm: str, command: list[str], run=subprocess.run,
 
 
 def remove(run=subprocess.run, config_home: Path | None = None) -> None:
+    if not shutil.which("systemctl"):
+        raise SchedulerUnavailable(
+            "systemd is not available. Remove the english-coach lines with `crontab -e`.")
     run(["systemctl", "--user", "disable", "--now", f"{UNIT}.timer"], capture_output=True, text=True)
     unit_dir = Path(config_home or _config_home()) / "systemd" / "user"
     for suffix in ("service", "timer"):

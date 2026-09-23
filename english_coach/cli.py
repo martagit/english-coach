@@ -128,7 +128,15 @@ def cmd_schedule(args, paths: AppPaths, env: dict) -> int:
 
 
 def cmd_unschedule(args, paths: AppPaths, env: dict) -> int:
-    scheduler.remove()
+    try:
+        scheduler.remove()
+    except scheduler.SchedulerUnavailable as exc:
+        print(str(exc))
+        return 1
+    current = scheduler.status()
+    if current.installed:
+        print(f"Failed to remove the daily job: {current.detail}", file=sys.stderr)
+        return 1
     print("Removed the daily english-coach job.")
     return 0
 

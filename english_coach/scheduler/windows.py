@@ -58,7 +58,7 @@ def render_task_xml(command: list[str], time_hhmm: str, user: str) -> str:
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>{escape(exe)}</Command>
+      <Command>"{escape(exe)}"</Command>
       <Arguments>{escape(args)}</Arguments>
     </Exec>
   </Actions>
@@ -73,19 +73,19 @@ def install(time_hhmm: str, command: list[str], run=subprocess.run, user: str | 
     xml_path = tmp_dir / "english-coach-task.xml"
     xml_path.write_text(xml, encoding="utf-16")  # schtasks requires UTF-16
     proc = run(["schtasks", "/Create", "/TN", TASK_NAME, "/XML", str(xml_path), "/F"],
-               capture_output=True, text=True)
+               capture_output=True, text=True, errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"schtasks failed: {(proc.stderr or proc.stdout).strip()}")
     return f"Task Scheduler: '{TASK_NAME}' daily at {time_hhmm}, plus at logon (+5 min)."
 
 
 def remove(run=subprocess.run) -> None:
-    run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True)
+    run(["schtasks", "/Delete", "/TN", TASK_NAME, "/F"], capture_output=True, text=True, errors="replace")
 
 
 def status(run=subprocess.run) -> ScheduleStatus:
     proc = run(["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
-               capture_output=True, text=True)
+               capture_output=True, text=True, errors="replace")
     if proc.returncode != 0:
         return ScheduleStatus(False, f"Task '{TASK_NAME}' not found.")
     keep = [l.strip() for l in proc.stdout.splitlines()

@@ -10,16 +10,20 @@ from english_coach.scheduler import ScheduleStatus
 LABEL = "io.github.english-coach"
 
 
-def render_plist(command: list[str], time_hhmm: str, log_dir: Path) -> bytes:
+def render_plist(command: list[str], time_hhmm: str, log_dir: Path,
+                  path_env: str | None = None) -> bytes:
     hour, minute = (int(x) for x in time_hhmm.split(":"))
-    return plistlib.dumps({
+    data = {
         "Label": LABEL,
         "ProgramArguments": list(command),
         "StartCalendarInterval": {"Hour": hour, "Minute": minute},
         "RunAtLoad": True,  # catch up at login; launchd also runs a missed interval after wake
         "StandardOutPath": str(Path(log_dir) / "launchd.log"),
         "StandardErrorPath": str(Path(log_dir) / "launchd.log"),
-    })
+    }
+    if path_env:
+        data["EnvironmentVariables"] = {"PATH": path_env}
+    return plistlib.dumps(data)
 
 
 def _agent_path(home: Path) -> Path:
@@ -27,13 +31,15 @@ def _agent_path(home: Path) -> Path:
 
 
 def install(time_hhmm: str, log_dir: Path, command: list[str], run=subprocess.run,
-            home: Path | None = None, uid: int | None = None) -> str:
+            home: Path | None = None, uid: int | None = None,
+            path_env: str | None = None) -> str:
     home = Path(home or Path.home())
     uid = os.getuid() if uid is None else uid
+    path_env = os.environ.get("PATH", "") if path_env is None else path_env
     agent = _agent_path(home)
     agent.parent.mkdir(parents=True, exist_ok=True)
     Path(log_dir).mkdir(parents=True, exist_ok=True)
-    agent.write_bytes(render_plist(command, time_hhmm, log_dir))
+    agent.write_bytes(render_plist(command, time_hhmm, log_dir, path_env))
     run(["launchctl", "bootout", f"gui/{uid}/{LABEL}"], capture_output=True, text=True)
     proc = run(["launchctl", "bootstrap", f"gui/{uid}", str(agent)], capture_output=True, text=True)
     if proc.returncode != 0:
