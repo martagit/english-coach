@@ -7,11 +7,11 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from english_coach import coach, vault
+from english_coach import coach, scheduler, vault
 from english_coach.analyzer import (
     ClaudeAnalyzer, ClaudeCliAnalyzer, enrich_patterns, enrich_phrases, run_claude_cli,
 )
-from english_coach.config import AppPaths, Config, ConfigError, load_config
+from english_coach.config import AppPaths, Config, ConfigError, load_config, save_config
 from english_coach.curator import curate
 from english_coach.lock import AlreadyRunning, run_lock
 from english_coach.runlog import run_log, write_last_run
@@ -104,6 +104,35 @@ def cmd_enrich(args, paths: AppPaths, env: dict) -> int:
         return 1
 
 
+def _valid_time(s: str) -> str:
+    hh, mm = s.split(":")
+    if not (0 <= int(hh) <= 23 and 0 <= int(mm) <= 59):
+        raise argparse.ArgumentTypeError("time must be HH:MM")
+    return f"{int(hh):02d}:{int(mm):02d}"
+
+
+def cmd_schedule(args, paths: AppPaths, env: dict) -> int:
+    config = load_config(paths, env)
+    if args.time:
+        config = replace(config, schedule_time=args.time)
+        save_config(paths, config)
+    try:
+        print(scheduler.install(config.schedule_time, paths.log_file.parent))
+        return 0
+    except scheduler.SchedulerUnavailable as exc:
+        print(str(exc))
+        return 1
+    except RuntimeError as exc:
+        print(f"Scheduling failed: {exc}", file=sys.stderr)
+        return 1
+
+
+def cmd_unschedule(args, paths: AppPaths, env: dict) -> int:
+    scheduler.remove()
+    print("Removed the daily english-coach job.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="english-coach",
@@ -126,6 +155,12 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument("--patterns", action="store_true")
     enrich.add_argument("--force", action="store_true", help="Regenerate ALL notes.")
     enrich.set_defaults(func=cmd_enrich)
+
+    sch = sub.add_parser("schedule", help="Register (or update) the daily OS job.")
+    sch.add_argument("--time", type=_valid_time, default=None, help="HH:MM, local time.")
+    sch.set_defaults(func=cmd_schedule)
+    unsch = sub.add_parser("unschedule", help="Remove the daily OS job.")
+    unsch.set_defaults(func=cmd_unschedule)
     return parser
 
 
