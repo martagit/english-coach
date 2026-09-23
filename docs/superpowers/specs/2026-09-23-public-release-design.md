@@ -87,7 +87,7 @@ Location: OS config directory via the `platformdirs` package (`user_config_dir("
 (`%APPDATA%\english-coach\`, `~/Library/Application Support/english-coach/`,
 `~/.config/english-coach/`).
 
-`config.toml`:
+`config.toml` (the watermark stays in `<vault>/.coach-state.json`, as today):
 
 ```toml
 vault_path = "~/english-coach-vault"
@@ -110,7 +110,7 @@ Secrets: `ANTHROPIC_API_KEY` env var, else `secrets.toml` next to `config.toml`,
 user-only permissions (chmod 600 on POSIX; default per-user ACL under `%APPDATA%` on Windows).
 Only needed for `backend = "api"`.
 
-Other files in the config dir: `state.json` (watermark), `run.lock`, `logs/coach.log`
+Other files in the config dir: `run.lock`, `logs/coach.log`
 (rotating), `workdir/` (the dedicated cwd for `claude -p`, see below).
 
 CLI flags (`--vault`, `--backend`, …) override config values for a single run.
