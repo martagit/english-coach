@@ -141,6 +141,13 @@ def cmd_unschedule(args, paths: AppPaths, env: dict) -> int:
     return 0
 
 
+def cmd_doctor(args, paths: AppPaths, env: dict) -> int:
+    from english_coach.doctor import format_checks, run_checks
+    checks = run_checks(paths, env, ping=args.ping)
+    print(format_checks(checks))
+    return 0 if all(c.ok for c in checks) else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="english-coach",
@@ -169,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
     sch.set_defaults(func=cmd_schedule)
     unsch = sub.add_parser("unschedule", help="Remove the daily OS job.")
     unsch.set_defaults(func=cmd_unschedule)
+    doc = sub.add_parser("doctor", help="Check that everything is set up.")
+    doc.add_argument("--ping", action="store_true", help="Also make a tiny test call to Claude.")
+    doc.set_defaults(func=cmd_doctor)
     return parser
 
 
