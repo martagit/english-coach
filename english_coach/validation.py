@@ -21,5 +21,5 @@ def validate_timezone(tz: str) -> str:
         ZoneInfo(tz)
     except Exception as exc:
         raise ValueError(
-            f"unknown timezone {tz!r} (use an IANA name like Europe/Warsaw)") from exc
+            f"unknown timezone {tz!r} (use an IANA name like Europe/London)") from exc
     return tz

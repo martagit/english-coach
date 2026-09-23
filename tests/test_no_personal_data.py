@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN = [
     r"C:\\Users\\[A-Za-z]",            # absolute Windows user paths
     "soft" + "wareone", "mpt" + "-library", "ai-" + "knowledge",
-    "Polish" + "-native", r"\.NET", "lang" + "fuse",
+    "Polish" + "-native", r"\.NET", "lang" + "fuse", "war" + "saw",
 ]
 SCANNED = [ROOT / "README.md", ROOT / "pyproject.toml", *sorted((ROOT / "english_coach").rglob("*.py"))]
 

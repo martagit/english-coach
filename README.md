@@ -74,7 +74,7 @@ Config lives in an OS-standard per-user directory (override with `ENGLISH_COACH_
 
 ```toml
 vault_path = "~/english-coach-vault"
-timezone = "Europe/Warsaw"          # detected at init, user-confirmable
+timezone = "Europe/London"          # detected at init, user-confirmable
 backend = "cli"                     # "cli" | "api"
 model = "claude-opus-5-5"           # used by api backend; passed to cli via --model
 schedule_time = "07:00"
