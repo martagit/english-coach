@@ -1,19 +1,5 @@
-from english_coach.filtering import extract_user_prompts, is_noise, filter_prompts
+from english_coach.filtering import is_noise, filter_prompts
 from english_coach.models import UserPrompt
-from datetime import timezone
-
-
-def test_extract_pulls_user_content_with_utc_timestamp():
-    traces = [
-        {"input": {"role": "user", "content": "Why do we need the reference here?"},
-         "timestamp": "2026-07-05T09:30:00Z"},
-        {"input": {"role": "assistant", "content": "Because ..."},
-         "timestamp": "2026-07-05T09:31:00Z"},
-    ]
-    out = extract_user_prompts(traces)
-    assert len(out) == 1
-    assert out[0].text == "Why do we need the reference here?"
-    assert out[0].timestamp_utc.tzinfo == timezone.utc
 
 
 def test_is_noise_task_notification():

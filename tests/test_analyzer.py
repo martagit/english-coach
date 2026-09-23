@@ -6,11 +6,11 @@ from english_coach.analyzer import (
     extract_json_object, build_enrichment_prompt, enrich_phrases, ANALYSIS_TOOL,
 )
 from english_coach.models import UserPrompt, PhraseInfo
-from english_coach.config import Config
+from english_coach.config import Config, DEFAULT_MODEL
 
 
 def _cfg():
-    return Config("h", "p", "s", "ak", Path("."), Path("."))
+    return Config(vault_path=Path("."))
 
 
 def test_tool_schema_names_expected_fields():
@@ -129,7 +129,7 @@ def test_claude_analyzer_returns_analysis():
     analyzer = ClaudeAnalyzer(_cfg(), client=fake)
     a = analyzer.analyze([UserPrompt("hello world", None)], [])
     assert a.snapshot == ["ok"]
-    assert fake.messages.kwargs["model"] == "claude-opus-4-8"
+    assert fake.messages.kwargs["model"] == DEFAULT_MODEL
     assert fake.messages.kwargs["tool_choice"]["name"] == "report_analysis"
 
 

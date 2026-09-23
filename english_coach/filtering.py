@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 
 from english_coach.models import UserPrompt
 
@@ -14,24 +13,6 @@ TRIVIAL_ACKS = {
 _URL_ONLY = re.compile(r"^https?://\S+$", re.IGNORECASE)
 _IMAGE_ONLY = re.compile(r"^(\s*\[Image #\d+\]\s*)+$")
 _STACKTRACE_MARKERS = ("Traceback (most recent call last)", "\tat ", "\n  File \"")
-
-
-def _parse_ts(raw: str | None) -> datetime | None:
-    if not raw:
-        return None
-    dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    return dt.astimezone(timezone.utc)
-
-
-def extract_user_prompts(traces: list[dict]) -> list[UserPrompt]:
-    out: list[UserPrompt] = []
-    for t in traces:
-        inp = t.get("input") or {}
-        if isinstance(inp, dict) and inp.get("role") == "user":
-            content = inp.get("content")
-            if isinstance(content, str) and content.strip():
-                out.append(UserPrompt(text=content, timestamp_utc=_parse_ts(t.get("timestamp"))))
-    return out
 
 
 def is_noise(text: str) -> bool:

@@ -1,84 +1,91 @@
-import json
-import pytest
+import os
+import sys
 from pathlib import Path
-from english_coach.config import load_langfuse_creds, load_anthropic_key, load_config
+
+import pytest
+
+from english_coach.config import (
+    AppPaths, Config, ConfigError, DEFAULT_MODEL, load_config, save_api_key, save_config,
+)
+from english_coach.profile import Profile
 
 
-def _write_mcp(path: Path):
-    path.write_text(json.dumps({"mcpServers": {"langfuse": {"env": {
-        "LANGFUSE_HOST": "http://localhost:3000",
-        "LANGFUSE_PUBLIC_KEY": "pk-lf-x",
-        "LANGFUSE_SECRET_KEY": "sk-lf-y",
-    }}}}), encoding="utf-8")
+def _paths(tmp_path) -> AppPaths:
+    return AppPaths(tmp_path / "cfg")
 
 
-def test_load_langfuse_creds_from_mcp(tmp_path):
-    mcp = tmp_path / ".mcp.json"
-    _write_mcp(mcp)
-    host, pub, sec = load_langfuse_creds(mcp, env={})
-    assert host == "http://localhost:3000"
-    assert pub == "pk-lf-x"
-    assert sec == "sk-lf-y"
+def test_app_paths_layout(tmp_path):
+    p = _paths(tmp_path)
+    assert p.config_file == tmp_path / "cfg" / "config.toml"
+    assert p.secrets_file == tmp_path / "cfg" / "secrets.toml"
+    assert p.lock_file == tmp_path / "cfg" / "run.lock"
+    assert p.log_file == tmp_path / "cfg" / "logs" / "coach.log"
+    assert p.last_run_file == tmp_path / "cfg" / "last_run.json"
+    assert p.workdir == tmp_path / "cfg" / "workdir"
 
 
-def test_env_overrides_mcp(tmp_path):
-    mcp = tmp_path / ".mcp.json"
-    _write_mcp(mcp)
-    host, pub, sec = load_langfuse_creds(mcp, env={"LANGFUSE_HOST": "http://other:3000"})
-    assert host == "http://other:3000"
-    assert pub == "pk-lf-x"
+def test_app_paths_env_override(tmp_path):
+    assert AppPaths.default({"ENGLISH_COACH_CONFIG_DIR": str(tmp_path)}).config_dir == tmp_path
 
 
-def test_load_anthropic_key_from_vault_secrets(tmp_path):
-    (tmp_path / ".coach-secrets.json").write_text(
-        json.dumps({"ANTHROPIC_API_KEY": "sk-ant-file"}), encoding="utf-8")
-    assert load_anthropic_key(tmp_path, env={}) == "sk-ant-file"
+def test_save_then_load_round_trip(tmp_path):
+    p = _paths(tmp_path)
+    cfg = Config(vault_path=tmp_path / "vault", timezone="Europe/Warsaw", backend="api",
+                 schedule_time="06:30", profile=Profile("Polish", "tester"), max_active=8)
+    save_config(p, cfg)
+    loaded = load_config(p, env={})
+    assert loaded == cfg
 
 
-def test_load_anthropic_key_env_fallback(tmp_path):
-    assert load_anthropic_key(tmp_path, env={"ANTHROPIC_API_KEY": "sk-ant-env"}) == "sk-ant-env"
+def test_defaults(tmp_path):
+    p = _paths(tmp_path)
+    p.config_dir.mkdir(parents=True)
+    p.config_file.write_text('vault_path = "~/v"\n', encoding="utf-8")
+    cfg = load_config(p, env={})
+    assert cfg.vault_path == Path.home() / "v"
+    assert cfg.backend == "cli" and cfg.model == DEFAULT_MODEL
+    assert cfg.profile == Profile()
+    assert (cfg.max_active, cfg.max_new_phrases, cfg.adopted_threshold) == (12, 2, 3)
 
 
-def test_load_anthropic_key_missing_raises(tmp_path):
-    with pytest.raises(RuntimeError):
-        load_anthropic_key(tmp_path, env={})
+def test_missing_config_tells_user_to_init(tmp_path):
+    with pytest.raises(ConfigError, match="english-coach init"):
+        load_config(_paths(tmp_path), env={})
 
 
-def test_load_config_composes(tmp_path):
-    mcp = tmp_path / ".mcp.json"
-    _write_mcp(mcp)
-    (tmp_path / ".coach-secrets.json").write_text(
-        json.dumps({"ANTHROPIC_API_KEY": "sk-ant-file"}), encoding="utf-8")
-    cfg = load_config(vault_path=tmp_path, mcp_json_path=mcp, env={})
-    assert cfg.langfuse_host == "http://localhost:3000"
-    assert cfg.anthropic_api_key == "sk-ant-file"
-    assert cfg.model == "claude-opus-4-8"
-    assert cfg.adopted_threshold == 3
+def test_invalid_toml_names_the_file(tmp_path):
+    p = _paths(tmp_path)
+    p.config_dir.mkdir(parents=True)
+    p.config_file.write_text("vault_path = \n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="config.toml"):
+        load_config(p, env={})
 
 
-def test_load_langfuse_creds_missing_raises(tmp_path):
-    mcp = tmp_path / ".mcp.json"
-    mcp.write_text(json.dumps({"mcpServers": {"langfuse": {"env": {
-        "LANGFUSE_HOST": "http://localhost:3000",
-        "LANGFUSE_PUBLIC_KEY": "pk-lf-x",
-        # secret intentionally missing
-    }}}}), encoding="utf-8")
-    with pytest.raises(RuntimeError):
-        load_langfuse_creds(mcp, env={})
+def test_invalid_backend_rejected(tmp_path):
+    p = _paths(tmp_path)
+    p.config_dir.mkdir(parents=True)
+    p.config_file.write_text('vault_path = "v"\nbackend = "gpt"\n', encoding="utf-8")
+    with pytest.raises(ConfigError, match="backend"):
+        load_config(p, env={})
 
 
-def test_config_repr_redacts_secrets(tmp_path):
-    mcp = tmp_path / ".mcp.json"
-    _write_mcp(mcp)
-    (tmp_path / ".coach-secrets.json").write_text(json.dumps({"ANTHROPIC_API_KEY": "sk-ant-file"}), encoding="utf-8")
-    cfg = load_config(vault_path=tmp_path, mcp_json_path=mcp, env={})
-    r = repr(cfg)
-    assert "sk-ant-file" not in r
-    assert "sk-lf-y" not in r
+def test_api_key_env_wins_over_secrets_file(tmp_path):
+    p = _paths(tmp_path)
+    save_config(p, Config(vault_path=tmp_path))
+    save_api_key(p, "sk-ant-file")
+    assert load_config(p, env={}).anthropic_api_key == "sk-ant-file"
+    assert load_config(p, env={"ANTHROPIC_API_KEY": "sk-ant-env"}).anthropic_api_key == "sk-ant-env"
 
 
-def test_config_has_curation_defaults(tmp_path):
-    from english_coach.config import Config
-    cfg = Config("h", "p", "s", "ak", tmp_path, tmp_path / ".mcp.json")
-    assert cfg.max_active == 12
-    assert cfg.max_new_phrases == 2
+def test_api_key_not_in_repr_or_config_file(tmp_path):
+    p = _paths(tmp_path)
+    save_config(p, Config(vault_path=tmp_path, anthropic_api_key="sk-ant-secret"))
+    assert "sk-ant-secret" not in p.config_file.read_text(encoding="utf-8")
+    assert "sk-ant-secret" not in repr(Config(vault_path=tmp_path, anthropic_api_key="sk-ant-secret"))
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permissions")
+def test_secrets_file_is_user_only(tmp_path):
+    p = _paths(tmp_path)
+    save_api_key(p, "sk-ant-x")
+    assert (os.stat(p.secrets_file).st_mode & 0o777) == 0o600
