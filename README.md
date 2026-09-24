@@ -6,11 +6,6 @@ out notes for the wins, one focus pattern to work on, before → after fixes for
 edges, phrases worth practicing, and a dashboard that ties it all together — so improving
 your English is a side effect of the work you were already doing.
 
-## Screenshot
-
-<!-- add docs/dashboard.png before publishing -->
-![English Coach dashboard](docs/dashboard.png)
-
 ## Requirements
 
 - [Claude Code](https://docs.claude.com/claude-code), logged in.
@@ -20,7 +15,7 @@ your English is a side effect of the work you were already doing.
 ## Quick start
 
 ```
-uv tool install git+https://github.com/<owner>/english-coach
+uv tool install git+https://github.com/martagit/english-coach
 english-coach init
 ```
 
