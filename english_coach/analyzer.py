@@ -12,7 +12,9 @@ from english_coach.coach_prompts import (  # noqa: F401  (COACH_PROMPT_PREFIXES 
 from english_coach.config import Config
 from english_coach.models import (
     Analysis, Win, BeforeAfter, FocusPattern, Recurring, NewPhrase, UserPrompt, PhraseInfo,
+    ConstructionInfo, MissedConstruction, NewConstruction,
 )
+from english_coach.vault import note_name
 from english_coach.profile import Profile
 
 _BA = {"type": "object", "properties": {"before": {"type": "string"}, "after": {"type": "string"}},
@@ -39,6 +41,17 @@ ANALYSIS_TOOL = {
                 "required": ["phrase", "meaning", "example"]}},
             "reused_phrases": {"type": "array", "items": {"type": "string"}},
             "snapshot": {"type": "array", "items": {"type": "string"}},
+            "construction_wins": {"type": "array", "items": {"type": "object", "properties": {
+                "construction": {"type": "string"}, "quote": {"type": "string"}},
+                "required": ["construction", "quote"]}},
+            "missed_constructions": {"type": "array", "items": {"type": "object", "properties": {
+                "construction": {"type": "string"}, "before": {"type": "string"},
+                "after": {"type": "string"}},
+                "required": ["construction", "before", "after"]}},
+            "new_constructions": {"type": "array", "items": {"type": "object", "properties": {
+                "construction": {"type": "string"}, "rule": {"type": "string"},
+                "example": {"type": "string"}},
+                "required": ["construction", "rule", "example"]}},
         },
         "required": ["wins", "focus_pattern", "recurring", "new_phrases", "reused_phrases", "snapshot"],
     },
@@ -60,11 +73,14 @@ def system_prompt(profile: Profile) -> str:
 
 def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
                           max_new_phrases: int = 2, known_patterns=(),
-                          profile: Profile = Profile()) -> str:
+                          profile: Profile = Profile(), constructions=(),
+                          max_new_constructions: int = 1) -> str:
     patterns = "\n".join(f"- {name}: {desc}" if desc else f"- {name}"
                          for name, desc in known_patterns) or "- (none yet)"
     book = "\n".join(f"- {p.phrase} (status: {p.status}, reuse_count: {p.reuse_count})"
                      for p in phrasebook) or "- (empty)"
+    cons = "\n".join(f"- {c.construction} | {c.status} | {c.rule or '-'}"
+                     for c in constructions) or "- (none yet)"
     joined = "\n\n".join(f"[{i + 1}] {p.text}" for i, p in enumerate(prompts))
     return (
         f"{system_prompt(profile)}\n\n"
@@ -72,6 +88,9 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
         f"{patterns}\n\n"
         "Current phrasebook (taught phrases — detect which were reused today):\n"
         f"{book}\n\n"
+        "Grammar constructions the learner is practicing (name | status | rule) — everyday "
+        "native structures they rarely use; these are upgrades, not mistakes:\n"
+        f"{cons}\n\n"
         "The user's prompts for the period:\n"
         f"{joined}\n\n"
         "Analyze and call report_analysis. reused_phrases must be a subset of the phrasebook "
@@ -83,11 +102,40 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
         "the detailed guidance in 'explanation', never in the name.\n"
         f"For new_phrases: propose AT MOST {max_new_phrases}, and only if genuinely high-value "
         "for this user — an empty list is a fine answer. Never re-teach anything already in the "
-        "phrasebook above, including close variants of it."
+        "phrasebook above, including close variants of it.\n"
+        "construction_wins: for each construction listed above that the learner actually used "
+        "correctly, give its name copied verbatim and the learner's verbatim quote. Only names "
+        "from that list.\n"
+        "missed_constructions: AT MOST 3, ONLY for constructions with status 'active'. Pick "
+        "sentences the learner actually wrote ('before', verbatim) where that construction would "
+        "sound clearly more natural, and rewrite them with it ('after', same meaning). Skip it "
+        "if the rewrite is merely different. An empty list is fine.\n"
+        f"new_constructions: AT MOST {max_new_constructions}. Only an everyday native grammar "
+        "construction the learner's prompts show they avoid — not vocabulary and not a mistake "
+        "(those are patterns), and never a variant of a construction, phrase or pattern listed "
+        "above. 'rule' is 1-2 plain sentences; 'example' is one of the learner's sentences "
+        "rewritten with it. An empty list is fine."
     )
 
 
-def parse_analysis(payload: dict, max_new_phrases: int = 2) -> Analysis:
+_MAX_MISSED = 3
+
+
+def _cons_key(name: str) -> str:
+    return note_name(name.replace("...", "…")).strip()
+
+
+def _dicts(payload: dict, key: str) -> list[dict]:
+    return [x for x in (payload.get(key) or []) if isinstance(x, dict)]
+
+
+def _text(d: dict, key: str) -> str:
+    v = d.get(key)
+    return v.strip() if isinstance(v, str) else ""
+
+
+def parse_analysis(payload: dict, max_new_phrases: int = 2, known_constructions=None,
+                   max_new_constructions: int = 1) -> Analysis:
     fp_raw = payload.get("focus_pattern")
     fp = None
     if fp_raw:
@@ -96,6 +144,29 @@ def parse_analysis(payload: dict, max_new_phrases: int = 2) -> Analysis:
             explanation=fp_raw["explanation"],
             examples=[BeforeAfter(e["before"], e["after"]) for e in fp_raw.get("examples", [])],
         )
+    known = (None if known_constructions is None
+             else {_cons_key(n): n for n in known_constructions})
+
+    def canon(name: str) -> str | None:
+        if not name:
+            return None
+        return name if known is None else known.get(_cons_key(name))
+
+    cons_wins = []
+    for d in _dicts(payload, "construction_wins"):
+        name, quote = canon(_text(d, "construction")), _text(d, "quote")
+        if name and quote:
+            cons_wins.append(Win(name, quote))
+    missed = []
+    for d in _dicts(payload, "missed_constructions"):
+        name, before, after = canon(_text(d, "construction")), _text(d, "before"), _text(d, "after")
+        if name and before and after:
+            missed.append(MissedConstruction(name, before, after))
+    new_cons = []
+    for d in _dicts(payload, "new_constructions"):
+        name, rule, example = _text(d, "construction"), _text(d, "rule"), _text(d, "example")
+        if name and rule and (known is None or _cons_key(name) not in known):
+            new_cons.append(NewConstruction(name, rule, example))
     return Analysis(
         wins=[Win(w["phrase"], w["quote"]) for w in payload.get("wins", [])],
         focus_pattern=fp,
@@ -104,7 +175,14 @@ def parse_analysis(payload: dict, max_new_phrases: int = 2) -> Analysis:
                      for n in payload.get("new_phrases", [])[:max_new_phrases]],
         reused_phrases=list(payload.get("reused_phrases", [])),
         snapshot=list(payload.get("snapshot", [])),
+        construction_wins=cons_wins,
+        missed_constructions=missed[:_MAX_MISSED],
+        new_constructions=new_cons[:max_new_constructions],
     )
+
+
+def _practicing(constructions) -> list[ConstructionInfo]:
+    return [c for c in constructions if c.status != "adopted"]
 
 
 class ClaudeAnalyzer:
@@ -116,9 +194,11 @@ class ClaudeAnalyzer:
         self._client = client
 
     def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
-               known_patterns=()) -> Analysis:
+               known_patterns=(), constructions=()) -> Analysis:
+        cons = _practicing(constructions)
         prompt = build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases,
-                                       known_patterns, self._config.profile)
+                                       known_patterns, self._config.profile, cons,
+                                       self._config.max_new_constructions)
         message = self._client.messages.create(
             model=self._config.model,
             max_tokens=_MAX_TOKENS,
@@ -128,7 +208,9 @@ class ClaudeAnalyzer:
         )
         for block in message.content:
             if getattr(block, "type", None) == "tool_use":
-                return parse_analysis(block.input, self._config.max_new_phrases)
+                return parse_analysis(block.input, self._config.max_new_phrases,
+                                      [c.construction for c in cons],
+                                      self._config.max_new_constructions)
         raise RuntimeError("Claude did not return a tool_use block.")
 
 
@@ -139,15 +221,19 @@ class ClaudeAnalyzer:
 
 _CLI_JSON_INSTRUCTION = (
     "\n\nOutput ONLY a single JSON object and nothing else — no prose, no explanation, "
-    "no markdown code fences. It must match exactly this shape (all six keys required; "
-    "use [] for empty arrays and null for focus_pattern if there is none):\n"
+    "no markdown code fences. It must match exactly this shape (the first six keys are "
+    "required; construction_wins, missed_constructions and new_constructions are optional but "
+    "include them; use [] for empty arrays and null for focus_pattern if there is none):\n"
     '{"wins":[{"phrase":"...","quote":"..."}],'
     '"focus_pattern":{"pattern":"...","explanation":"...",'
     '"examples":[{"before":"...","after":"..."}]},'
     '"recurring":[{"pattern":"...","before":"...","after":"..."}],'
     '"new_phrases":[{"phrase":"...","meaning":"...","example":"..."}],'
     '"reused_phrases":["..."],'
-    '"snapshot":["..."]}'
+    '"snapshot":["..."],'
+    '"construction_wins":[{"construction":"...","quote":"..."}],'
+    '"missed_constructions":[{"construction":"...","before":"...","after":"..."}],'
+    '"new_constructions":[{"construction":"...","rule":"...","example":"..."}]}'
 )
 
 
@@ -236,9 +322,11 @@ class ClaudeCliAnalyzer:
         return run_claude_cli(prompt, model=self._model, timeout=self._timeout)
 
     def analyze(self, prompts: list[UserPrompt], phrasebook: list[PhraseInfo],
-               known_patterns=()) -> Analysis:
+               known_patterns=(), constructions=()) -> Analysis:
+        cons = _practicing(constructions)
         prompt = (build_analysis_prompt(prompts, phrasebook, self._config.max_new_phrases,
-                                        known_patterns, self._config.profile)
+                                        known_patterns, self._config.profile, cons,
+                                        self._config.max_new_constructions)
                  + _CLI_JSON_INSTRUCTION)
         text = self._runner(prompt)
         try:
@@ -247,7 +335,8 @@ class ClaudeCliAnalyzer:
             # One stricter retry — models occasionally wrap JSON in prose/fences.
             text = self._runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
             payload = extract_json_object(text)
-        return parse_analysis(payload, self._config.max_new_phrases)
+        return parse_analysis(payload, self._config.max_new_phrases,
+                              [c.construction for c in cons], self._config.max_new_constructions)
 
 
 # --- Phrase enrichment (definition + dev-context sample usage) --------------

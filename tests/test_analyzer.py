@@ -256,3 +256,85 @@ def test_build_prompt_throttles_new_phrases():
     text = build_analysis_prompt([UserPrompt("hello", None)], [], max_new_phrases=2)
     assert "AT MOST 2" in text
     assert "empty list is a fine answer" in text
+
+
+from english_coach.models import ConstructionInfo
+from english_coach.analyzer import _CLI_JSON_INSTRUCTION
+
+_CONS = [ConstructionInfo("be supposed to", "active", 0, "expected behaviour"),
+         ConstructionInfo("What if we…?", "backlog", 0, "suggestions"),
+         ConstructionInfo("unless", "adopted", 5, "if not")]
+
+
+def _payload(**extra):
+    base = {"wins": [], "focus_pattern": None, "recurring": [], "new_phrases": [],
+            "reused_phrases": [], "snapshot": []}
+    base.update(extra)
+    return base
+
+
+def test_schema_has_optional_construction_keys():
+    schema = ANALYSIS_TOOL["input_schema"]
+    for key in ("construction_wins", "missed_constructions", "new_constructions"):
+        assert key in schema["properties"]
+        assert key not in schema["required"]
+        assert key in _CLI_JSON_INSTRUCTION
+
+
+def test_prompt_lists_constructions_and_active_only_rule():
+    text = build_analysis_prompt([UserPrompt("x", None)], [], constructions=_CONS[:2],
+                                 max_new_constructions=1)
+    assert "- be supposed to | active | expected behaviour" in text
+    assert "- What if we…? | backlog | suggestions" in text
+    assert "ONLY for constructions with status 'active'" in text
+    assert "AT MOST 3" in text
+
+
+def test_prompt_without_constructions_says_none_yet():
+    text = build_analysis_prompt([UserPrompt("x", None)], [])
+    assert "Grammar constructions" in text and "- (none yet)" in text
+
+
+def test_parse_without_construction_keys_gives_empty_lists():
+    a = parse_analysis(_payload())
+    assert a.construction_wins == [] and a.missed_constructions == [] and a.new_constructions == []
+
+
+def test_parse_construction_keys_canonicalises_and_filters():
+    payload = _payload(
+        construction_wins=[{"construction": "be supposed to", "quote": "it's supposed to retry"},
+                           {"construction": "BE SUPPOSED TO?", "quote": "case differs"},
+                           {"construction": "made up", "quote": "x"},
+                           {"construction": "be supposed to"},
+                           "not a dict"],
+        missed_constructions=[{"construction": "What if we...?", "before": "b", "after": "a"}] * 4
+                             + [{"construction": "be supposed to", "before": "", "after": "a"}],
+        new_constructions=[{"construction": "end up + -ing", "rule": "r", "example": "e"},
+                           {"construction": "as long as", "rule": "r", "example": "e"}])
+    a = parse_analysis(payload, known_constructions=["be supposed to", "What if we…?"],
+                       max_new_constructions=1)
+    assert [(w.phrase, w.quote) for w in a.construction_wins] == [("be supposed to", "it's supposed to retry")]
+    assert len(a.missed_constructions) == 3
+    assert a.missed_constructions[0].construction == "What if we…?"
+    assert [n.construction for n in a.new_constructions] == ["end up + -ing"]
+
+
+def test_parse_new_construction_matching_known_name_is_dropped():
+    a = parse_analysis(_payload(new_constructions=[{"construction": "be supposed to",
+                                                    "rule": "r", "example": "e"}]),
+                       known_constructions=["be supposed to"])
+    assert a.new_constructions == []
+
+
+def test_cli_analyzer_sends_non_adopted_constructions_and_filters():
+    seen = {}
+
+    def runner(prompt):
+        seen["prompt"] = prompt
+        return json.dumps(_payload(construction_wins=[{"construction": "unless", "quote": "q"},
+                                                      {"construction": "be supposed to", "quote": "q2"}]))
+
+    a = ClaudeCliAnalyzer(_cfg(), runner=runner).analyze([UserPrompt("x", None)], [], (), _CONS)
+    assert "be supposed to | active" in seen["prompt"]
+    assert "unless | adopted" not in seen["prompt"]
+    assert [w.phrase for w in a.construction_wins] == ["be supposed to"]
