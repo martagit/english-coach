@@ -105,10 +105,25 @@ def test_invalid_timezone_rejected_naming_file_and_key(tmp_path):
         load_config(paths, env={})
 
 
-@pytest.mark.parametrize("key", ["adopted_threshold", "max_active", "max_new_phrases"])
+@pytest.mark.parametrize("key", ["adopted_threshold", "max_active", "max_new_phrases",
+                                 "max_active_constructions", "max_new_constructions",
+                                 "construction_adopted_threshold"])
 def test_non_integer_limit_rejected_naming_file_and_key(tmp_path, key):
     paths = AppPaths(tmp_path)
     paths.config_file.write_text(f'vault_path = "/v"\n[limits]\n{key} = "lots"\n',
                                  encoding="utf-8")
     with pytest.raises(ConfigError, match=rf"config\.toml.*limits\.{key}"):
         load_config(paths, env={})
+
+
+def test_construction_limits_default_and_round_trip(tmp_path):
+    p = _paths(tmp_path)
+    p.config_dir.mkdir(parents=True)
+    p.config_file.write_text('vault_path = "~/v"\n', encoding="utf-8")
+    cfg = load_config(p, env={})
+    assert (cfg.max_active_constructions, cfg.max_new_constructions,
+            cfg.construction_adopted_threshold) == (3, 1, 5)
+    custom = Config(vault_path=tmp_path / "v", max_active_constructions=2,
+                    max_new_constructions=0, construction_adopted_threshold=7)
+    save_config(p, custom)
+    assert load_config(p, env={}) == custom

@@ -8,7 +8,8 @@ FORBIDDEN = [
     "soft" + "wareone", "mpt" + "-library", "ai-" + "knowledge",
     "Polish" + "-native", r"\.NET", "lang" + "fuse", "war" + "saw",
 ]
-SCANNED = [ROOT / "README.md", ROOT / "pyproject.toml", *sorted((ROOT / "english_coach").rglob("*.py"))]
+SCANNED = [ROOT / "README.md", ROOT / "pyproject.toml", *sorted((ROOT / "english_coach").rglob("*.py")),
+           *sorted((ROOT / "english_coach" / "assets").glob("*.toml"))]
 
 
 def test_no_personal_or_internal_strings():

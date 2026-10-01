@@ -166,3 +166,46 @@ def test_curate_retries_once_on_unparseable_output(tmp_path):
     outputs = iter(["sorry, no JSON", reply])
     changed = curate(tmp_path, runner=lambda p: next(outputs), max_active=12)
     assert changed == 1
+
+
+from english_coach.curator import CONSTRUCTIONS, PHRASES
+
+
+def test_phrase_prompt_unchanged_in_substance():
+    p = build_curation_prompt([_inv("park it")], max_active=12)
+    assert p.startswith("You curate a personal English phrasebook")
+    assert "At most 12 phrases" in p
+    assert "missed_count" not in p
+
+
+def test_construction_prompt_wording_and_missed_count():
+    inv = [dict(_inv("unless", status="active", priority=1, theme="conditions"), missed_count=4)]
+    p = build_curation_prompt(inv, max_active=3, kind=CONSTRUCTIONS)
+    assert p.startswith("You curate a personal list of English grammar constructions")
+    assert "At most 3 grammar constructions" in p
+    assert "missed_count: 4" in p
+    assert "high missed_count" in p
+
+
+def test_curate_constructions_folder_with_cap(tmp_path):
+    from english_coach import constructions as cons
+    for name in ("unless", "as long as", "in that case"):
+        cons.ensure_construction_note(tmp_path, name, date(2026, 7, 1))
+    reply = json.dumps({"phrases": [
+        {"phrase": n, "status": "active", "priority": i + 1, "theme": "conditions"}
+        for i, n in enumerate(("unless", "as long as", "in that case"))]})
+    changed = curate(tmp_path, runner=lambda p: reply, max_active=2, kind=CONSTRUCTIONS)
+    assert changed == 3
+    statuses = {n: read_note(tmp_path / "Constructions" / f"{n}.md")[0]["status"]
+                for n in ("unless", "as long as", "in that case")}
+    assert statuses == {"unless": "active", "as long as": "active", "in that case": "backlog"}
+    assert not (tmp_path / "Phrases").exists()
+
+
+def test_curate_constructions_matches_names_with_ascii_dots(tmp_path):
+    from english_coach import constructions as cons
+    cons.ensure_construction_note(tmp_path, "What if we…?", date(2026, 7, 1))
+    reply = json.dumps({"phrases": [{"phrase": "What if we...?", "status": "active",
+                                     "priority": 1, "theme": "suggesting"}]})
+    assert curate(tmp_path, runner=lambda p: reply, max_active=3, kind=CONSTRUCTIONS) == 1
+    assert read_note(tmp_path / "Constructions" / "What if we….md")[0]["status"] == "active"

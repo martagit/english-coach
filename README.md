@@ -45,6 +45,13 @@ run, so if your machine was off it simply catches up next time it runs. Each run
 Claude call for the day's analysis, plus a few small calls to enrich phrase/pattern notes and
 curate the vault.
 
+Besides phrases (vocabulary) and patterns (recurring mistakes), the coach tracks **grammar
+constructions** — everyday native structures you rarely use, such as "be supposed to",
+"What if we…?" or "end up + -ing". A starter list is seeded into `Constructions/`; the coach
+keeps three active at a time, notes when you use one correctly, and shows a few of your own
+sentences rewritten with it under **Try this construction** in the daily note. A construction
+counts as adopted after you've used it on five different days.
+
 ## Privacy
 
 Transcripts are read and parsed entirely on your machine. The text of that day's prompts is
@@ -69,7 +76,7 @@ subscription usage.
 |---|---|
 | `english-coach init` | Interactive setup: prerequisites, vault, learner profile, backend, first backfill, schedule. |
 | `english-coach run` | The daily job: analyzes completed days since the last run. Flags: `--backfill-days`, `--from`/`--to`, `--include-today`, `--config-dir`, `--claude-config-dir`. |
-| `english-coach enrich` | Adds definitions/examples/rules to bare phrase and pattern notes. |
+| `english-coach enrich` | Adds definitions/examples/rules to bare phrase, pattern and construction notes (`--phrases`, `--patterns`, `--constructions` to pick). |
 | `english-coach doctor [--ping]` | Checks that everything is set up; `--ping` also makes a tiny test call to Claude (the only way it checks your login). |
 | `english-coach schedule [--time HH:MM]` | Registers (or updates) the daily OS job. |
 | `english-coach unschedule` | Removes the daily OS job. |
@@ -103,6 +110,9 @@ context = "software developer"     # one line; shapes examples and idiom choice
 adopted_threshold = 3
 max_active = 12
 max_new_phrases = 2
+max_active_constructions = 3
+max_new_constructions = 1
+construction_adopted_threshold = 5
 ```
 
 The watermark that tracks how far analysis has progressed is not in `config.toml` — it lives

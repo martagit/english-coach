@@ -49,5 +49,13 @@ def test_wheel_contains_obsidian_assets(tmp_path):
     names = zipfile.ZipFile(wheel).namelist()
     for f in ("english_coach/assets/obsidian/plugins/dataview/main.js",
               "english_coach/assets/obsidian/plugins/dataview/manifest.json",
-              "english_coach/assets/obsidian/community-plugins.json"):
+              "english_coach/assets/obsidian/community-plugins.json",
+              "english_coach/assets/constructions.toml"):
         assert f in names
+
+
+def test_skeleton_creates_and_seeds_constructions(tmp_path):
+    v = tmp_path / "vault"
+    created = create_skeleton(v)
+    assert (v / "Constructions" / "be supposed to.md").exists()
+    assert "starter grammar constructions" in created

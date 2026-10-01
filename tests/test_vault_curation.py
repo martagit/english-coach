@@ -65,3 +65,17 @@ def test_apply_curation_counts_only_real_changes(tmp_path):
     _make(tmp_path, "park it", status="active", priority=1, theme="hedging")
     n = apply_curation(tmp_path, {"park it": {"status": "active", "priority": 1, "theme": "hedging"}})
     assert n == 0  # idempotent: same values -> no write, no count
+
+
+def test_curation_io_on_constructions_folder(tmp_path):
+    from datetime import date
+    from english_coach import constructions as cons
+    from english_coach.frontmatter import read_note
+    from english_coach.vault import apply_curation, read_curation_inventory
+    cons.ensure_construction_note(tmp_path, "unless", date(2026, 7, 1))
+    inv = read_curation_inventory(tmp_path, folder="Constructions", name_key="construction")
+    assert inv[0]["phrase"] == "unless" and inv[0]["missed_count"] == 0
+    n = apply_curation(tmp_path, {"unless": {"status": "active", "priority": 1, "theme": "conditions"}},
+                       folder="Constructions")
+    assert n == 1
+    assert read_note(tmp_path / "Constructions" / "unless.md")[0]["status"] == "active"

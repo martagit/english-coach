@@ -70,6 +70,9 @@ class Config:
     adopted_threshold: int = 3
     max_active: int = 12
     max_new_phrases: int = 2
+    max_active_constructions: int = 3
+    max_new_constructions: int = 1
+    construction_adopted_threshold: int = 5
     anthropic_api_key: str = field(default="", repr=False)
 
 
@@ -123,6 +126,9 @@ def load_config(paths: AppPaths, env: dict) -> Config:
         adopted_threshold=limit("adopted_threshold", 3),
         max_active=limit("max_active", 12),
         max_new_phrases=limit("max_new_phrases", 2),
+        max_active_constructions=limit("max_active_constructions", 3),
+        max_new_constructions=limit("max_new_constructions", 1),
+        construction_adopted_threshold=limit("construction_adopted_threshold", 5),
         anthropic_api_key=_api_key(paths, env),
     )
 
@@ -138,7 +144,10 @@ def save_config(paths: AppPaths, config: Config) -> None:
                     "context": config.profile.context},
         "limits": {"adopted_threshold": config.adopted_threshold,
                    "max_active": config.max_active,
-                   "max_new_phrases": config.max_new_phrases},
+                   "max_new_phrases": config.max_new_phrases,
+                   "max_active_constructions": config.max_active_constructions,
+                   "max_new_constructions": config.max_new_constructions,
+                   "construction_adopted_threshold": config.construction_adopted_threshold},
     }
     paths.config_dir.mkdir(parents=True, exist_ok=True)
     paths.config_file.write_text(tomli_w.dumps(data), encoding="utf-8")

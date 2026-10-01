@@ -99,3 +99,50 @@ def test_recompute_migrates_legacy_learning_to_backlog(tmp_path):
     recompute_reuse(tmp_path)
     fm, _ = read_note(p)
     assert fm["status"] == "backlog"
+
+
+from english_coach import constructions as cons
+from english_coach.models import MissedConstruction, Win
+from english_coach.vault import write_quiet_note
+
+
+def _cons_analysis(used=(), missed=()):
+    return Analysis(wins=[], focus_pattern=None, recurring=[], new_phrases=[], reused_phrases=[],
+                    snapshot=[], construction_wins=[Win(n, f"quote {i}") for i, n in enumerate(used)],
+                    missed_constructions=[MissedConstruction(n, "b", "a") for n in missed])
+
+
+def test_construction_reuse_counts_distinct_days_and_missed(tmp_path):
+    cons.ensure_construction_note(tmp_path, "unless", date(2026, 7, 1), status="active")
+    write_daily_note(tmp_path, _win(3), 1, _cons_analysis(used=["unless", "unless"], missed=["unless"]))
+    write_daily_note(tmp_path, _win(4), 1, _cons_analysis(missed=["unless", "unless"]))
+    recompute_reuse(tmp_path)
+    fm, _ = read_note(tmp_path / "Constructions" / "unless.md")
+    assert fm["reuse_count"] == 1
+    assert fm["missed_count"] == 3
+    assert fm["status"] == "active"
+    assert fm["last_used"] == date(2026, 7, 3)
+
+
+def test_construction_adopted_after_threshold_days(tmp_path):
+    cons.ensure_construction_note(tmp_path, "unless", date(2026, 7, 1), status="active")
+    for d in (3, 4, 5, 6):
+        write_daily_note(tmp_path, _win(d), 1, _cons_analysis(used=["unless"]))
+    recompute_reuse(tmp_path, construction_adopted_threshold=5)
+    assert read_note(tmp_path / "Constructions" / "unless.md")[0]["status"] == "active"
+    write_daily_note(tmp_path, _win(7), 1, _cons_analysis(used=["unless"]))
+    recompute_reuse(tmp_path, construction_adopted_threshold=5)
+    assert read_note(tmp_path / "Constructions" / "unless.md")[0]["status"] == "adopted"
+
+
+def test_quiet_note_has_empty_construction_lists(tmp_path):
+    fm, _ = read_note(write_quiet_note(tmp_path, _win(5)))
+    assert fm["constructions_used"] == [] and fm["constructions_missed"] == []
+
+
+def test_dashboard_has_construction_sections(tmp_path):
+    text = write_dashboard(tmp_path).read_text(encoding="utf-8")
+    assert "## Constructions — practicing" in text
+    assert 'FROM "Constructions"' in text
+    assert "missed_count" in text
+    assert "constructions_used" in text
