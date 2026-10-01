@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, date
 
 
@@ -55,6 +55,20 @@ class NewPhrase:
 
 
 @dataclass(frozen=True)
+class MissedConstruction:
+    construction: str
+    before: str
+    after: str
+
+
+@dataclass(frozen=True)
+class NewConstruction:
+    construction: str
+    rule: str
+    example: str
+
+
+@dataclass(frozen=True)
 class Analysis:
     wins: list[Win]
     focus_pattern: FocusPattern | None
@@ -62,6 +76,9 @@ class Analysis:
     new_phrases: list[NewPhrase]
     reused_phrases: list[str]
     snapshot: list[str]
+    construction_wins: list[Win] = field(default_factory=list)
+    missed_constructions: list[MissedConstruction] = field(default_factory=list)
+    new_constructions: list[NewConstruction] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -69,3 +86,11 @@ class PhraseInfo:
     phrase: str
     status: str
     reuse_count: int
+
+
+@dataclass(frozen=True)
+class ConstructionInfo:
+    construction: str
+    status: str
+    reuse_count: int
+    rule: str = ""

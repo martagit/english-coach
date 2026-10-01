@@ -30,3 +30,19 @@ def test_window_not_empty_with_days():
 def test_analysis_defaults_constructible():
     a = Analysis(wins=[], focus_pattern=None, recurring=[], new_phrases=[], reused_phrases=[], snapshot=[])
     assert a.wins == []
+
+
+def test_analysis_construction_fields_default_empty():
+    from english_coach.models import Analysis
+    a = Analysis(wins=[], focus_pattern=None, recurring=[], new_phrases=[],
+                 reused_phrases=[], snapshot=[])
+    assert a.construction_wins == []
+    assert a.missed_constructions == []
+    assert a.new_constructions == []
+
+
+def test_construction_dataclasses():
+    from english_coach.models import ConstructionInfo, MissedConstruction, NewConstruction
+    assert MissedConstruction("be supposed to", "b", "a").after == "a"
+    assert NewConstruction("unless", "rule", "ex").rule == "rule"
+    assert ConstructionInfo("unless", "active", 2).rule == ""
