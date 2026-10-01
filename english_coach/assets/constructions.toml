@@ -1,0 +1,114 @@
+# Starter grammar constructions seeded into a vault's Constructions/ folder.
+# Generic on purpose: the learner's own sentences live only in their vault.
+
+[[construction]]
+name = "be supposed to"
+theme = "expectations"
+priority = 1
+rule = "Use \"be supposed to + verb\" for what should happen according to a plan, a design or an agreement — often when it didn't."
+example = "The job is supposed to retry three times, but it gave up after the first failure."
+
+[[construction]]
+name = "What if we…?"
+theme = "suggesting"
+priority = 1
+rule = "Use \"What if we + past simple…?\" to float an idea without insisting on it."
+example = "What if we moved the check into the handler instead?"
+
+[[construction]]
+name = "end up + -ing"
+theme = "results"
+priority = 1
+rule = "Use \"end up + -ing\" (or \"end up with + noun\") for the result you reach after a process, often one you didn't plan."
+example = "If we skip the review, we'll end up fixing the same bug twice."
+
+[[construction]]
+name = "cleft sentence (What I don't get is…)"
+theme = "emphasis"
+priority = 2
+rule = "Start with \"What I don't get is…\", \"The thing is…\" or \"The problem is…\" to put the important part at the end of the sentence."
+example = "What I don't get is why the second request succeeds."
+
+[[construction]]
+name = "which (linking a whole clause)"
+theme = "linking ideas"
+priority = 2
+rule = "After a comma, \"which\" can refer to the whole previous clause, joining a cause and its effect in one sentence."
+example = "The cache was never cleared, which meant every user saw stale data."
+
+[[construction]]
+name = "I'd rather"
+theme = "preferences"
+priority = 2
+rule = "Use \"I'd rather + base verb\" for your own preference and \"I'd rather we + past simple\" for what you want others to do."
+example = "I'd rather we kept this PR small and did the rename separately."
+
+[[construction]]
+name = "Is it worth + -ing?"
+theme = "suggesting"
+priority = 2
+rule = "Use \"Is it worth + -ing?\" to ask whether the benefit justifies the effort."
+example = "Is it worth adding a test for such a small change?"
+
+[[construction]]
+name = "should have + past participle"
+theme = "hindsight"
+priority = 2
+rule = "Use \"should have / shouldn't have + past participle\" to say what would have been right in the past."
+example = "We should have checked the logs before restarting the service."
+
+[[construction]]
+name = "unless"
+theme = "conditions"
+priority = 2
+rule = "\"Unless\" means \"if not\"; it replaces a negative if-clause and never takes \"if\" after it."
+example = "Don't merge it unless the pipeline is green."
+
+[[construction]]
+name = "How about + -ing?"
+theme = "suggesting"
+priority = 3
+rule = "Use \"How about + -ing?\" or \"How about + noun?\" for a light, friendly suggestion."
+example = "How about splitting the migration into two steps?"
+
+[[construction]]
+name = "as long as"
+theme = "conditions"
+priority = 3
+rule = "Use \"as long as\" for a condition that must stay true for something else to be OK."
+example = "You can refactor it as long as the public API stays the same."
+
+[[construction]]
+name = "in that case"
+theme = "conditions"
+priority = 3
+rule = "Use \"in that case\" to react to what someone just said, and \"otherwise\" for what happens if a condition is not met."
+example = "The flag is off in production? In that case, let's test it on staging first."
+
+[[construction]]
+name = "make sure (that)"
+theme = "instructions"
+priority = 3
+rule = "Use \"make sure (that) + clause\" or \"make sure to + verb\" to ask someone to guarantee something, instead of \"check if\" or \"remember to\"."
+example = "Make sure the migration runs before the new version starts."
+
+[[construction]]
+name = "confirmation tag (…, right?)"
+theme = "softening"
+priority = 3
+rule = "Add \", right?\" after a statement to check that you understood correctly."
+example = "The worker reads from the same queue, right?"
+
+[[construction]]
+name = "second conditional"
+theme = "hypotheticals"
+priority = 3
+rule = "Use \"If + past simple, would + verb\" for imagined or unlikely situations."
+example = "If we merged both PRs today, would the deployment break?"
+
+[[construction]]
+name = "get something working (get + object + -ing)"
+theme = "results"
+priority = 3
+rule = "Use \"get + object + -ing / past participle / adjective\" for causing a change of state."
+example = "I finally got the tests running locally."
