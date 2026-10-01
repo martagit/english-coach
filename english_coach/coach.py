@@ -7,13 +7,14 @@ from english_coach.config import Config
 from english_coach.filtering import filter_prompts
 from english_coach.window import compute_window, note_basename
 from english_coach.state import read_watermark, write_watermark
-from english_coach import vault
+from english_coach import constructions, vault
 
 
 def run(config: Config, source, analyzer, now_utc: datetime,
         backfill_days: int = 1, override_from: date | None = None,
         override_to: date | None = None, enricher=None, pattern_enricher=None,
-        include_today: bool = False, curator=None) -> str:
+        include_today: bool = False, curator=None, construction_curator=None,
+        construction_enricher=None) -> str:
     is_override = override_from is not None and override_to is not None
     # Today (and explicit range reprocessing) are partial/manual → don't advance
     # the watermark, so the next scheduled run still does the authoritative pass.
@@ -26,6 +27,9 @@ def run(config: Config, source, analyzer, now_utc: datetime,
         print("Nothing new to process.")
         return "empty"
 
+    constructions.seed_constructions(config.vault_path, introduced=window.days[-1],
+                                     max_active=config.max_active_constructions)
+
     prompts = filter_prompts(source.fetch_prompts(window.start_utc, window.end_utc))
     stats = getattr(source, "last_stats", None)
     if stats is not None:
@@ -34,8 +38,10 @@ def run(config: Config, source, analyzer, now_utc: datetime,
 
     if not prompts:
         vault.write_quiet_note(config.vault_path, window)
-        vault.recompute_reuse(config.vault_path, config.adopted_threshold)
-        _run_curator(curator)
+        vault.recompute_reuse(config.vault_path, config.adopted_threshold,
+                              config.construction_adopted_threshold)
+        _run_curator(curator, "phrase")
+        _run_curator(construction_curator, "construction")
         vault.write_dashboard(config.vault_path)
         if not no_advance:
             write_watermark(config.vault_path, window.end_utc)
@@ -44,15 +50,20 @@ def run(config: Config, source, analyzer, now_utc: datetime,
 
     phrasebook = vault.read_phrasebook(config.vault_path)
     known_patterns = vault.read_known_patterns(config.vault_path)
-    analysis = analyzer.analyze(prompts, phrasebook, known_patterns)
+    cons = constructions.read_constructions(config.vault_path)
+    analysis = analyzer.analyze(prompts, phrasebook, known_patterns, cons)
     vault.write_daily_note(config.vault_path, window, len(prompts), analysis)
     vault.apply_analysis_notes(config.vault_path, analysis, introduced=window.days[-1], day_label=label)
-    vault.recompute_reuse(config.vault_path, config.adopted_threshold)
-    _run_curator(curator)
+    vault.recompute_reuse(config.vault_path, config.adopted_threshold,
+                          config.construction_adopted_threshold)
+    _run_curator(curator, "phrase")
+    _run_curator(construction_curator, "construction")
     vault.write_dashboard(config.vault_path)
     # Give any newly-created (and still bare) phrase/pattern notes content.
     _run_enricher(vault.enrich_phrase_notes, config.vault_path, enricher, "phrase")
     _run_enricher(vault.enrich_pattern_notes, config.vault_path, pattern_enricher, "pattern")
+    _run_enricher(constructions.enrich_construction_notes, config.vault_path,
+                  construction_enricher, "construction")
     if not no_advance:
         write_watermark(config.vault_path, window.end_utc)
     print(f"Wrote report for {label} ({len(prompts)} prompts).")
@@ -72,13 +83,13 @@ def _run_enricher(enrich_notes, vault_path, enricher, kind: str) -> None:
         print(f"Enrichment failed (skipped): {exc}", file=sys.stderr)
 
 
-def _run_curator(curator) -> None:
+def _run_curator(curator, kind: str = "phrase") -> None:
     """Fail-soft: curation must never break the daily run."""
     if curator is None:
         return
     try:
         changed = curator()
         if changed:
-            print(f"Curated {changed} phrase note(s).")
+            print(f"Curated {changed} {kind} note(s).")
     except Exception as exc:
         print(f"Curator failed (skipped): {exc}", file=sys.stderr)

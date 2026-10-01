@@ -7,12 +7,13 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from english_coach import coach, scheduler, vault
+from english_coach import coach, constructions, scheduler, vault
 from english_coach.analyzer import (
-    ClaudeAnalyzer, ClaudeCliAnalyzer, enrich_patterns, enrich_phrases, run_claude_cli,
+    ClaudeAnalyzer, ClaudeCliAnalyzer, enrich_constructions, enrich_patterns, enrich_phrases,
+    run_claude_cli,
 )
 from english_coach.config import AppPaths, Config, ConfigError, load_config, save_config
-from english_coach.curator import curate
+from english_coach.curator import CONSTRUCTIONS, curate
 from english_coach.lock import AlreadyRunning, run_lock
 from english_coach.runlog import read_last_run, run_log, write_last_run
 from english_coach.transcripts import TranscriptSource, default_projects_dir
@@ -48,7 +49,13 @@ def execute_run(config: Config, paths: AppPaths, env: dict, *, backfill_days: in
                     enricher=lambda items: enrich_phrases(items, runner=runner, profile=prof),
                     pattern_enricher=lambda items: enrich_patterns(items, runner=runner, profile=prof),
                     curator=lambda: curate(config.vault_path, runner=runner,
-                                           max_active=config.max_active, profile=prof))
+                                           max_active=config.max_active, profile=prof),
+                    construction_enricher=lambda items: enrich_constructions(
+                        items, runner=runner, profile=prof),
+                    construction_curator=lambda: curate(
+                        config.vault_path, runner=runner,
+                        max_active=config.max_active_constructions, profile=prof,
+                        kind=CONSTRUCTIONS))
             code = 0
         except AlreadyRunning:
             print("Another english-coach run is in progress — skipping.")
@@ -98,19 +105,24 @@ def cmd_enrich(args, paths: AppPaths, env: dict) -> int:
     config = _load(paths, env, args)
     runner = make_runner(config, paths)
     prof = config.profile
-    do_phrases = args.phrases or not args.patterns
-    do_patterns = args.patterns or not args.phrases
+    picked = args.phrases or args.patterns or args.constructions
     try:
-        if do_phrases:
+        if args.phrases or not picked:
             n = vault.enrich_phrase_notes(
                 config.vault_path, lambda items: enrich_phrases(items, runner=runner, profile=prof),
                 force=args.force)
             print(f"Enriched {n} phrase note(s).")
-        if do_patterns:
+        if args.patterns or not picked:
             n = vault.enrich_pattern_notes(
                 config.vault_path, lambda items: enrich_patterns(items, runner=runner, profile=prof),
                 force=args.force)
             print(f"Enriched {n} pattern note(s).")
+        if args.constructions or not picked:
+            n = constructions.enrich_construction_notes(
+                config.vault_path,
+                lambda items: enrich_constructions(items, runner=runner, profile=prof),
+                force=args.force)
+            print(f"Enriched {n} construction note(s).")
         return 0
     except Exception as exc:
         print(f"Enrich failed: {exc}", file=sys.stderr)
@@ -204,10 +216,12 @@ def build_parser() -> argparse.ArgumentParser:
                           "(overrides CLAUDE_CONFIG_DIR).")
     run.set_defaults(func=cmd_run)
 
-    enrich = sub.add_parser("enrich", help="Add definitions/examples/rules to bare notes.")
+    enrich = sub.add_parser(
+        "enrich", help="Add definitions/examples/rules to bare phrase, pattern and construction notes.")
     enrich.add_argument("--vault", default=None)
     enrich.add_argument("--phrases", action="store_true")
     enrich.add_argument("--patterns", action="store_true")
+    enrich.add_argument("--constructions", action="store_true")
     enrich.add_argument("--force", action="store_true", help="Regenerate ALL notes.")
     enrich.set_defaults(func=cmd_enrich)
 

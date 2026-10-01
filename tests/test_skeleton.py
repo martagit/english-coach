@@ -51,3 +51,10 @@ def test_wheel_contains_obsidian_assets(tmp_path):
               "english_coach/assets/obsidian/plugins/dataview/manifest.json",
               "english_coach/assets/obsidian/community-plugins.json"):
         assert f in names
+
+
+def test_skeleton_creates_and_seeds_constructions(tmp_path):
+    v = tmp_path / "vault"
+    created = create_skeleton(v)
+    assert (v / "Constructions" / "be supposed to.md").exists()
+    assert "starter grammar constructions" in created

@@ -27,9 +27,10 @@ class FakeAnalyzer:
         self._analysis = analysis
         self.called = False
 
-    def analyze(self, prompts, phrasebook, known_patterns=()):
+    def analyze(self, prompts, phrasebook, known_patterns=(), constructions=()):
         self.called = True
         self.known_patterns = list(known_patterns)
+        self.constructions = list(constructions)
         return self._analysis
 
 
@@ -134,3 +135,48 @@ def test_run_survives_enricher_failure_and_advances_watermark(tmp_path, capsys):
     assert read_watermark(tmp_path) is not None
     err = capsys.readouterr().err
     assert err.count("Enrichment failed (skipped): enrich LLM down") == 2
+
+
+from english_coach.frontmatter import read_note
+from english_coach.models import Win
+
+
+def test_run_seeds_constructions_into_existing_vault_and_passes_them(tmp_path):
+    (tmp_path / "Phrases").mkdir()  # an existing vault without Constructions/
+    analyzer = FakeAnalyzer(Analysis(wins=[], focus_pattern=None, recurring=[], new_phrases=[],
+                                     reused_phrases=[], snapshot=[],
+                                     construction_wins=[Win("be supposed to", "it's supposed to retry")]))
+    status = run(_cfg(tmp_path), FakeSource([_p("Why isn't it retried here?")]), analyzer, now_utc=NOW)
+    assert status == "wrote:2026-07-05"
+    names = {c.construction for c in analyzer.constructions}
+    assert "be supposed to" in names
+    fm, _ = read_note(tmp_path / "Constructions" / "be supposed to.md")
+    assert fm["reuse_count"] == 1
+    daily_fm, _ = read_note(tmp_path / "Daily" / "2026-07-05.md")
+    assert daily_fm["constructions_used"] == ["be supposed to"]
+
+
+def test_construction_curator_and_enricher_are_called_and_fail_soft(tmp_path, capsys):
+    calls = []
+
+    def boom():
+        calls.append("curator")
+        raise RuntimeError("curator down")
+
+    def enricher(items):
+        calls.append("enricher")
+        raise RuntimeError("enricher down")
+
+    status = run(_cfg(tmp_path), FakeSource([_p("Why isn't it retried here?")]),
+                 FakeAnalyzer(_empty_analysis()), now_utc=NOW,
+                 construction_curator=boom, construction_enricher=enricher)
+    assert status == "wrote:2026-07-05"
+    assert calls == ["curator", "enricher"]
+    err = capsys.readouterr().err
+    assert "curator down" in err and "enricher down" in err
+    assert read_watermark(tmp_path) is not None
+
+
+def test_quiet_day_still_seeds_constructions(tmp_path):
+    run(_cfg(tmp_path), FakeSource([_p("ok")]), FakeAnalyzer(_empty_analysis()), now_utc=NOW)
+    assert (tmp_path / "Constructions" / "be supposed to.md").exists()

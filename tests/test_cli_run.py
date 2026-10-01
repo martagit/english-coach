@@ -19,7 +19,7 @@ class FakeSource:
 
 
 class FakeAnalyzer:
-    def analyze(self, prompts, phrasebook, known_patterns=()):
+    def analyze(self, prompts, phrasebook, known_patterns=(), constructions=()):
         return Analysis(wins=[], focus_pattern=None, recurring=[], new_phrases=[],
                         reused_phrases=[], snapshot=["ok"])
 
@@ -154,3 +154,18 @@ def test_run_logs_transcript_stats_line(tmp_path):
                     runner=lambda p: '{"phrases": []}')
     assert ("Transcripts: 2 files, 30 lines, 1 prompts, 1 malformed, 4 unrecognized."
             in paths.log_file.read_text(encoding="utf-8"))
+
+
+def test_enrich_constructions_flag_only_enriches_constructions(tmp_path, monkeypatch):
+    paths, cfg = _setup(tmp_path)
+    seen = []
+    monkeypatch.setattr(cli.vault, "enrich_phrase_notes", lambda *a, **k: seen.append("phrases") or 0)
+    monkeypatch.setattr(cli.vault, "enrich_pattern_notes", lambda *a, **k: seen.append("patterns") or 0)
+    monkeypatch.setattr(cli.constructions, "enrich_construction_notes",
+                        lambda *a, **k: seen.append("constructions") or 0)
+    monkeypatch.setattr(cli, "make_runner", lambda config, p: (lambda prompt: "{}"))
+    assert cli.main(["enrich", "--constructions"], env={"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}) == 0
+    assert seen == ["constructions"]
+    seen.clear()
+    assert cli.main(["enrich"], env={"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}) == 0
+    assert seen == ["phrases", "patterns", "constructions"]

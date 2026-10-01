@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import date
 from importlib.resources import as_file, files
 from pathlib import Path
 
+from english_coach import constructions
 from english_coach import vault as vault_mod
 
 DATAVIEW_VERSION = "0.5.68"
-_FOLDERS = ("Daily", "Phrases", "Patterns")
+_FOLDERS = ("Daily", "Phrases", "Patterns", "Constructions")
 
 
 def create_skeleton(vault: Path) -> list[str]:
@@ -22,6 +24,8 @@ def create_skeleton(vault: Path) -> list[str]:
     if not (vault / "English Coaching.md").exists():
         vault_mod.write_dashboard(vault)
         created.append("dashboard 'English Coaching.md'")
+    if constructions.seed_constructions(vault, introduced=date.today()):
+        created.append("starter grammar constructions")
 
     obsidian = vault / ".obsidian"
     with as_file(files("english_coach") / "assets" / "obsidian") as src:
