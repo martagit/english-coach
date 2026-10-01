@@ -159,6 +159,23 @@ result. Whether `claude` is actually logged in is checked only with `--ping`, wh
 tiny real Claude call. Logs live at
 `logs/coach.log` inside the config directory above.
 
+## Upgrade
+
+```
+uv tool upgrade english-coach
+```
+
+If the version number hasn't changed (e.g. you installed from a branch or a local folder),
+force a fresh build instead:
+
+```
+uv tool install --reinstall git+https://github.com/martagit/english-coach
+```
+
+Your config, vault and schedule are kept — the scheduled job keeps pointing at the same
+`english-coach` executable. New vault folders and notes (such as `Constructions/`) are created
+on the next run; run `english-coach doctor` to confirm everything is in place.
+
 ## Uninstall
 
 ```
