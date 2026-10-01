@@ -338,3 +338,16 @@ def test_cli_analyzer_sends_non_adopted_constructions_and_filters():
     assert "be supposed to | active" in seen["prompt"]
     assert "unless | adopted" not in seen["prompt"]
     assert [w.phrase for w in a.construction_wins] == ["be supposed to"]
+
+
+def test_construction_enrichment_prompt_and_parse():
+    from english_coach.analyzer import build_construction_enrichment_prompt, enrich_constructions
+    from english_coach.coach_prompts import CONSTRUCTION_ENRICH_PREAMBLE
+    from english_coach.profile import Profile
+    items = [{"construction": "unless", "rule": "if not", "your_quote": "wait unless green"}]
+    text = build_construction_enrichment_prompt(items, profile=Profile("German", "QA engineer"))
+    assert text.startswith(CONSTRUCTION_ENRICH_PREAMBLE)
+    assert "a German-native QA engineer" in text and "unless" in text and "wait unless green" in text
+    reply = '{"constructions":[{"construction":"unless","rule":"R","examples":["a","b"]},{"rule":"x"}]}'
+    assert enrich_constructions(items, runner=lambda p: reply) == {"unless": {"rule": "R", "examples": ["a", "b"]}}
+    assert enrich_constructions([], runner=lambda p: 1 / 0) == {}

@@ -160,3 +160,35 @@ def read_constructions(vault) -> list[ConstructionInfo]:
                                     reuse_count=int(fm.get("reuse_count", 0)),
                                     rule="" if rule == _NO_RULE else rule))
     return out
+
+
+def enrich_construction_notes(vault, enricher, force: bool = False) -> int:
+    """Fill in Rule + examples via `enricher` ([{"construction","rule","your_quote"}] ->
+    {name: {"rule","examples"}}), keeping the evidence sections. Only notes without
+    `enriched: true` are done unless force=True. Returns the count enriched."""
+    folder = _dir(vault)
+    if not folder.is_dir():
+        return 0
+    todo = []
+    for note in sorted(folder.glob("*.md")):
+        fm, body = read_note(note)
+        if force or not fm.get("enriched"):
+            todo.append((note, fm, parse_note_body(body)))
+    if not todo:
+        return 0
+    items = [{"construction": fm.get("construction", note.stem),
+              "rule": "" if p["rule"] == _NO_RULE else p["rule"],
+              "your_quote": p["used"][0][0] if p["used"] else None} for note, fm, p in todo]
+    data = enricher(items)
+    count = 0
+    for (note, fm, p), it in zip(todo, items):
+        d = data.get(it["construction"])
+        if not d:
+            continue
+        new_fm = dict(fm)
+        new_fm["enriched"] = True
+        write_note(note, new_fm, render_note_body(it["construction"], d.get("rule") or p["rule"],
+                                                  list(d.get("examples") or p["examples"]),
+                                                  p["used"], p["missed"]))
+        count += 1
+    return count

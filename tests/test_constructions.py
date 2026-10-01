@@ -101,3 +101,22 @@ def test_read_constructions(tmp_path):
     assert info["unless"].status == "active" and info["unless"].rule == "the rule"
     assert info["as long as"].rule == ""
     assert c.read_constructions(tmp_path / "missing") == []
+
+
+def test_enrich_construction_notes_keeps_evidence_and_marks_enriched(tmp_path):
+    c.ensure_construction_note(tmp_path, "unless", D, rule="old")
+    c.append_construction_evidence(tmp_path, "unless", ["my quote"], [("b", "a")], "2026-10-01")
+    seen = {}
+
+    def enricher(items):
+        seen["items"] = items
+        return {"unless": {"rule": "new rule", "examples": ["e1", "e2", "e3"]}}
+
+    assert c.enrich_construction_notes(tmp_path, enricher) == 1
+    assert seen["items"] == [{"construction": "unless", "rule": "old", "your_quote": "my quote"}]
+    fm, body = read_note(tmp_path / "Constructions" / "unless.md")
+    p = c.parse_note_body(body)
+    assert fm["enriched"] is True
+    assert p["rule"] == "new rule" and p["examples"] == ["e1", "e2", "e3"]
+    assert p["used"] == [("my quote", "10-01")] and p["missed"] == [("b", "a", "10-01")]
+    assert c.enrich_construction_notes(tmp_path, lambda items: 1 / 0) == 0  # nothing left to do

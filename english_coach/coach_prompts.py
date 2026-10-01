@@ -11,4 +11,8 @@ ENRICH_PREAMBLE = "You write concise flashcard content"
 PATTERN_PREAMBLE = "You explain English grammar rules"
 CURATOR_PREAMBLE = "You curate a personal English phrasebook"
 
-COACH_PROMPT_PREFIXES = (ANALYSIS_PREAMBLE, ENRICH_PREAMBLE, PATTERN_PREAMBLE, CURATOR_PREAMBLE)
+CONSTRUCTION_ENRICH_PREAMBLE = "You explain everyday English grammar constructions"
+CONSTRUCTION_CURATOR_PREAMBLE = "You curate a personal list of English grammar constructions"
+
+COACH_PROMPT_PREFIXES = (ANALYSIS_PREAMBLE, ENRICH_PREAMBLE, PATTERN_PREAMBLE, CURATOR_PREAMBLE,
+                         CONSTRUCTION_ENRICH_PREAMBLE, CONSTRUCTION_CURATOR_PREAMBLE)

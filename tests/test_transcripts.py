@@ -224,6 +224,8 @@ def test_coach_own_prompts_are_skipped_even_from_another_cwd():
         build_pattern_enrichment_prompt,
     )
     from english_coach.curator import build_curation_prompt
+    from english_coach.analyzer import build_construction_enrichment_prompt
+    from english_coach.curator import CONSTRUCTIONS
     from english_coach.models import UserPrompt as UP
     from english_coach.profile import Profile
     prof = Profile("Spanish", "data analyst")
@@ -233,6 +235,9 @@ def test_coach_own_prompts_are_skipped_even_from_another_cwd():
         build_pattern_enrichment_prompt([{"pattern": "Articles", "description": "", "examples": []}],
                                         profile=prof),
         build_curation_prompt([], 12, profile=prof),
+        build_construction_enrichment_prompt([{"construction": "unless", "rule": "", "your_quote": None}],
+                                             profile=prof),
+        build_curation_prompt([], 3, profile=prof, kind=CONSTRUCTIONS),
     ]
     for text in own:
         assert text.startswith(COACH_PROMPT_PREFIXES)

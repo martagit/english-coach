@@ -7,7 +7,8 @@ import subprocess
 import sys
 
 from english_coach.coach_prompts import (  # noqa: F401  (COACH_PROMPT_PREFIXES re-exported)
-    ANALYSIS_PREAMBLE, COACH_PROMPT_PREFIXES, ENRICH_PREAMBLE, PATTERN_PREAMBLE,
+    ANALYSIS_PREAMBLE, COACH_PROMPT_PREFIXES, CONSTRUCTION_ENRICH_PREAMBLE, ENRICH_PREAMBLE,
+    PATTERN_PREAMBLE,
 )
 from english_coach.config import Config
 from english_coach.models import (
@@ -443,4 +444,54 @@ def enrich_patterns(items: list[dict], runner=None, profile: Profile = Profile()
         name = p.get("pattern")
         if name:
             out[name] = {"rule": p.get("rule", "")}
+    return out
+
+
+def construction_enrich_system(profile: Profile) -> str:
+    return (
+        f"{CONSTRUCTION_ENRICH_PREAMBLE} to {profile.learner()}. Each 'rule' is 1-2 plain-English "
+        "sentences: the form of the construction and when native speakers reach for it. Example "
+        f"sentences must sound natural in the learner's working context ({profile.work_context()}) "
+        "— the kind of thing they would actually say to a colleague or write in a work message."
+    )
+
+
+def build_construction_enrichment_prompt(items: list[dict], examples_per_construction: int = 3,
+                                         profile: Profile = Profile()) -> str:
+    """items: [{"construction": str, "rule": str, "your_quote": str | None}]."""
+    blocks = []
+    for it in items:
+        q = it.get("your_quote")
+        suffix = f'\n  the learner actually used it: "{q}"' if q else ""
+        blocks.append(f"- {it['construction']}\n  current rule: {it.get('rule') or '(none)'}{suffix}")
+    listing = "\n".join(blocks)
+    return (
+        f"{construction_enrich_system(profile)}\n\n"
+        f"For EACH construction below, write a crisp 'rule' and {examples_per_construction} example "
+        "sentences. Do NOT reuse the learner's own quoted sentence as an example — write fresh ones.\n\n"
+        f"Constructions:\n{listing}\n\n"
+        "Output ONLY a single JSON object of exactly this shape — no prose, no markdown fences:\n"
+        '{"constructions":[{"construction":"<the name verbatim>","rule":"...","examples":["...","..."]}]}\n'
+        "Include EVERY construction, name copied verbatim so it can be matched back."
+    )
+
+
+def enrich_constructions(items: list[dict], runner=None, examples_per_construction: int = 3,
+                         profile: Profile = Profile()) -> dict:
+    """Return {construction: {"rule": str, "examples": [str, ...]}}. One batched call."""
+    if not items:
+        return {}
+    runner = runner or (lambda p: run_claude_cli(p))
+    prompt = build_construction_enrichment_prompt(items, examples_per_construction, profile)
+    text = runner(prompt)
+    try:
+        payload = extract_json_object(text)
+    except (ValueError, json.JSONDecodeError):
+        text = runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
+        payload = extract_json_object(text)
+    out: dict = {}
+    for c in payload.get("constructions", []):
+        name = c.get("construction")
+        if name:
+            out[name] = {"rule": c.get("rule", ""), "examples": list(c.get("examples", []))}
     return out
