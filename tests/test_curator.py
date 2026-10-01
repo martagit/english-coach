@@ -200,3 +200,12 @@ def test_curate_constructions_folder_with_cap(tmp_path):
                 for n in ("unless", "as long as", "in that case")}
     assert statuses == {"unless": "active", "as long as": "active", "in that case": "backlog"}
     assert not (tmp_path / "Phrases").exists()
+
+
+def test_curate_constructions_matches_names_with_ascii_dots(tmp_path):
+    from english_coach import constructions as cons
+    cons.ensure_construction_note(tmp_path, "What if we…?", date(2026, 7, 1))
+    reply = json.dumps({"phrases": [{"phrase": "What if we...?", "status": "active",
+                                     "priority": 1, "theme": "suggesting"}]})
+    assert curate(tmp_path, runner=lambda p: reply, max_active=3, kind=CONSTRUCTIONS) == 1
+    assert read_note(tmp_path / "Constructions" / "What if we….md")[0]["status"] == "active"

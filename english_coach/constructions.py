@@ -13,7 +13,7 @@ from pathlib import Path
 
 from english_coach.frontmatter import read_note, write_note
 from english_coach.models import Analysis, ConstructionInfo
-from english_coach.vault import _short_date, note_name
+from english_coach.vault import _short_date, construction_key, note_name
 
 FOLDER = "Constructions"
 _RULE = "**Rule:**"
@@ -21,6 +21,7 @@ _NO_RULE = "(rule to be added)"
 _EXAMPLES = "**Examples**"
 _USED = "## You used it"
 _MISSED = "## Try it next time"
+_PLACEHOLDERS = {_EXAMPLES: "_(no examples yet)_", _USED: "_(not yet)_", _MISSED: "_(nothing yet)_"}
 _USED_RE = re.compile(r'^- "(?P<quote>.+)"(?:\s+·\s+_(?P<tag>.+?)_)?$')
 _MISSED_RE = re.compile(r'^- ✗ (?P<before>.+?) → ✓ (?P<after>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
 
@@ -42,14 +43,47 @@ def load_starter() -> list[dict]:
     return tomllib.loads(text)["construction"]
 
 
+def _used_line(q: str, t: str) -> str:
+    return f'- "{q}"{_tag(t)}'
+
+
+def _missed_line(b: str, a: str, t: str) -> str:
+    return f"- ✗ {b} → ✓ {a}{_tag(t)}"
+
+
 def render_note_body(name, rule, examples, used, missed) -> str:
     lines = [f"# {name}", "", f"{_RULE} {rule or _NO_RULE}", "", _EXAMPLES]
-    lines += [f"- {e}" for e in examples] or ["_(no examples yet)_"]
+    lines += [f"- {e}" for e in examples] or [_PLACEHOLDERS[_EXAMPLES]]
     lines += ["", _USED]
-    lines += [f'- "{q}"{_tag(t)}' for q, t in used] or ["_(not yet)_"]
+    lines += [_used_line(q, t) for q, t in used] or [_PLACEHOLDERS[_USED]]
     lines += ["", _MISSED]
-    lines += [f"- ✗ {b} → ✓ {a}{_tag(t)}" for b, a, t in missed] or ["_(nothing yet)_"]
+    lines += [_missed_line(b, a, t) for b, a, t in missed] or [_PLACEHOLDERS[_MISSED]]
     return "\n".join(lines)
+
+
+def _edit_section(lines: list[str], header: str, items: list[str], append: bool) -> None:
+    """Replace (or extend) the lines under `header` in place, leaving every other
+    line of the note — including the learner's own sections — untouched."""
+    try:
+        i = next(k for k, line in enumerate(lines) if line.strip() == header)
+    except StopIteration:
+        lines += ["", header, *items]
+        return
+    j = i + 1
+    while j < len(lines) and not lines[j].lstrip().startswith(("#", "**")):
+        j += 1
+    kept = [line for line in lines[i + 1:j]
+            if line.strip() and line.strip() not in _PLACEHOLDERS.values()] if append else []
+    new = kept + items or [_PLACEHOLDERS[header]]
+    lines[i + 1:j] = new + ([""] if j < len(lines) else [])
+
+
+def _set_rule(lines: list[str], rule: str) -> None:
+    for k, line in enumerate(lines):
+        if line.strip().startswith(_RULE):
+            lines[k] = f"{_RULE} {rule}"
+            return
+    lines[1:1] = ["", f"{_RULE} {rule}"]
 
 
 def parse_note_body(body: str) -> dict:
@@ -116,22 +150,26 @@ def append_construction_evidence(vault, name: str, used_quotes, missed_pairs, da
     tag = _short_date(day_label)
     seen_used = {q for q, _ in p["used"]}
     seen_missed = {(b, a) for b, a, _ in p["missed"]}
-    changed = False
+    new_used, new_missed = [], []
     for q in used_quotes:
         q = q.strip()
         if q and q not in seen_used:
             seen_used.add(q)
-            p["used"].append((q, tag))
-            changed = True
+            new_used.append(_used_line(q, tag))
     for b, a in missed_pairs:
         b, a = b.strip(), a.strip()
         if b and a and (b, a) not in seen_missed:
             seen_missed.add((b, a))
-            p["missed"].append((b, a, tag))
-            changed = True
-    if changed:
-        write_note(path, fm, render_note_body(fm.get("construction", name), p["rule"],
-                                              p["examples"], p["used"], p["missed"]))
+            new_missed.append(_missed_line(b, a, tag))
+    if not (new_used or new_missed):
+        return
+    # Edit in place: the learner may have written their own notes in this file.
+    lines = body.splitlines()
+    if new_used:
+        _edit_section(lines, _USED, new_used, append=True)
+    if new_missed:
+        _edit_section(lines, _MISSED, new_missed, append=True)
+    write_note(path, fm, "\n".join(lines))
 
 
 def apply_construction_notes(vault, analysis: Analysis, introduced, day_label: str) -> None:
@@ -164,8 +202,9 @@ def read_constructions(vault) -> list[ConstructionInfo]:
 
 def enrich_construction_notes(vault, enricher, force: bool = False) -> int:
     """Fill in Rule + examples via `enricher` ([{"construction","rule","your_quote"}] ->
-    {name: {"rule","examples"}}), keeping the evidence sections. Only notes without
-    `enriched: true` are done unless force=True. Returns the count enriched."""
+    {name: {"rule","examples"}}), editing those two parts in place so evidence and the
+    learner's own notes survive. Only notes without `enriched: true` are done unless
+    force=True. Returns the count enriched."""
     folder = _dir(vault)
     if not folder.is_dir():
         return 0
@@ -173,22 +212,26 @@ def enrich_construction_notes(vault, enricher, force: bool = False) -> int:
     for note in sorted(folder.glob("*.md")):
         fm, body = read_note(note)
         if force or not fm.get("enriched"):
-            todo.append((note, fm, parse_note_body(body)))
+            todo.append((note, fm, body, parse_note_body(body)))
     if not todo:
         return 0
     items = [{"construction": fm.get("construction", note.stem),
               "rule": "" if p["rule"] == _NO_RULE else p["rule"],
-              "your_quote": p["used"][0][0] if p["used"] else None} for note, fm, p in todo]
-    data = enricher(items)
+              "your_quote": p["used"][0][0] if p["used"] else None} for note, fm, _, p in todo]
+    # The model may re-type names ('...' for '…'), so match on the tolerant key.
+    data = {construction_key(k): v for k, v in enricher(items).items()}
     count = 0
-    for (note, fm, p), it in zip(todo, items):
-        d = data.get(it["construction"])
+    for (note, fm, body, _), it in zip(todo, items):
+        d = data.get(construction_key(it["construction"]))
         if not d:
             continue
+        lines = body.splitlines()
+        if d.get("rule"):
+            _set_rule(lines, d["rule"])
+        if d.get("examples"):
+            _edit_section(lines, _EXAMPLES, [f"- {e}" for e in d["examples"]], append=False)
         new_fm = dict(fm)
         new_fm["enriched"] = True
-        write_note(note, new_fm, render_note_body(it["construction"], d.get("rule") or p["rule"],
-                                                  list(d.get("examples") or p["examples"]),
-                                                  p["used"], p["missed"]))
+        write_note(note, new_fm, "\n".join(lines))
         count += 1
     return count

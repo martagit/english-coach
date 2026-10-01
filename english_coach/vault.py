@@ -14,6 +14,12 @@ def note_name(phrase: str) -> str:
     return _INVALID.sub("", phrase).strip()
 
 
+def construction_key(name: str) -> str:
+    """Tolerant identity for construction names the model may re-type ('...' for '…',
+    a curly apostrophe for a straight one). Case still matters."""
+    return note_name(name.replace("...", "…").replace("’", "'")).strip()
+
+
 def _link(phrase: str) -> str:
     return f"[[{note_name(phrase)}]]"
 

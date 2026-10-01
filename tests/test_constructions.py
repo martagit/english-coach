@@ -120,3 +120,28 @@ def test_enrich_construction_notes_keeps_evidence_and_marks_enriched(tmp_path):
     assert p["rule"] == "new rule" and p["examples"] == ["e1", "e2", "e3"]
     assert p["used"] == [("my quote", "10-01")] and p["missed"] == [("b", "a", "10-01")]
     assert c.enrich_construction_notes(tmp_path, lambda items: 1 / 0) == 0  # nothing left to do
+
+
+def test_enricher_reply_with_ascii_dots_still_matches(tmp_path):
+    c.ensure_construction_note(tmp_path, "What if we…?", D, rule="old")
+    n = c.enrich_construction_notes(
+        tmp_path, lambda items: {"What if we...?": {"rule": "new", "examples": ["e"]}})
+    assert n == 1
+    fm, body = read_note(tmp_path / "Constructions" / "What if we….md")
+    assert fm["enriched"] is True and c.parse_note_body(body)["rule"] == "new"
+
+
+def test_learner_notes_survive_evidence_and_enrichment(tmp_path):
+    p = c.ensure_construction_note(tmp_path, "unless", D, rule="old")
+    p.write_text(p.read_text(encoding="utf-8") + "\n## My notes\nremember the Slack thread\n",
+                 encoding="utf-8")
+    c.append_construction_evidence(tmp_path, "unless", ["q1"], [("b", "a")], "2026-10-01")
+    c.enrich_construction_notes(tmp_path, lambda items: {"unless": {"rule": "new", "examples": ["e"]}})
+    c.append_construction_evidence(tmp_path, "unless", ["q2"], [], "2026-10-02")
+    body = read_note(p)[1]
+    assert "## My notes\nremember the Slack thread" in body
+    parsed = c.parse_note_body(body)
+    assert parsed["rule"] == "new" and parsed["examples"] == ["e"]
+    assert [q for q, _ in parsed["used"]] == ["q1", "q2"]
+    assert parsed["missed"] == [("b", "a", "10-01")]
+    assert "_(not yet)_" not in body and "_(nothing yet)_" not in body

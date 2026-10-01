@@ -351,3 +351,28 @@ def test_construction_enrichment_prompt_and_parse():
     reply = '{"constructions":[{"construction":"unless","rule":"R","examples":["a","b"]},{"rule":"x"}]}'
     assert enrich_constructions(items, runner=lambda p: reply) == {"unless": {"rule": "R", "examples": ["a", "b"]}}
     assert enrich_constructions([], runner=lambda p: 1 / 0) == {}
+
+
+def test_parse_collapses_multiline_construction_text():
+    a = parse_analysis(_payload(
+        construction_wins=[{"construction": "be supposed to", "quote": "it is supposed\n  to work"}],
+        missed_constructions=[{"construction": "be supposed to", "before": "line one\nline two",
+                               "after": "x\ny"}]),
+        known_constructions=["be supposed to"])
+    assert a.construction_wins[0].quote == "it is supposed to work"
+    assert (a.missed_constructions[0].before, a.missed_constructions[0].after) == ("line one line two", "x y")
+
+
+def test_parse_drops_missed_for_non_active_constructions():
+    a = parse_analysis(_payload(missed_constructions=[
+        {"construction": "What if we…?", "before": "b", "after": "a"},
+        {"construction": "be supposed to", "before": "b", "after": "a"}]),
+        known_constructions=["be supposed to", "What if we…?"],
+        active_constructions=["be supposed to"])
+    assert [m.construction for m in a.missed_constructions] == ["be supposed to"]
+
+
+def test_parse_matches_curly_apostrophe():
+    a = parse_analysis(_payload(construction_wins=[{"construction": "I’d rather", "quote": "q"}]),
+                       known_constructions=["I'd rather"])
+    assert [w.phrase for w in a.construction_wins] == ["I'd rather"]

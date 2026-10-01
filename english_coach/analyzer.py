@@ -15,7 +15,7 @@ from english_coach.models import (
     Analysis, Win, BeforeAfter, FocusPattern, Recurring, NewPhrase, UserPrompt, PhraseInfo,
     ConstructionInfo, MissedConstruction, NewConstruction,
 )
-from english_coach.vault import note_name
+from english_coach.vault import construction_key
 from english_coach.profile import Profile
 
 _BA = {"type": "object", "properties": {"before": {"type": "string"}, "after": {"type": "string"}},
@@ -122,21 +122,17 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
 _MAX_MISSED = 3
 
 
-def _cons_key(name: str) -> str:
-    return note_name(name.replace("...", "…")).strip()
-
-
 def _dicts(payload: dict, key: str) -> list[dict]:
     return [x for x in (payload.get(key) or []) if isinstance(x, dict)]
 
 
 def _text(d: dict, key: str) -> str:
     v = d.get(key)
-    return v.strip() if isinstance(v, str) else ""
+    return " ".join(v.split()) if isinstance(v, str) else ""  # one line: quotes go into bullets/tables
 
 
 def parse_analysis(payload: dict, max_new_phrases: int = 2, known_constructions=None,
-                   max_new_constructions: int = 1) -> Analysis:
+                   max_new_constructions: int = 1, active_constructions=None) -> Analysis:
     fp_raw = payload.get("focus_pattern")
     fp = None
     if fp_raw:
@@ -146,12 +142,14 @@ def parse_analysis(payload: dict, max_new_phrases: int = 2, known_constructions=
             examples=[BeforeAfter(e["before"], e["after"]) for e in fp_raw.get("examples", [])],
         )
     known = (None if known_constructions is None
-             else {_cons_key(n): n for n in known_constructions})
+             else {construction_key(n): n for n in known_constructions})
+    active = (None if active_constructions is None
+              else {construction_key(n) for n in active_constructions})
 
     def canon(name: str) -> str | None:
         if not name:
             return None
-        return name if known is None else known.get(_cons_key(name))
+        return name if known is None else known.get(construction_key(name))
 
     cons_wins = []
     for d in _dicts(payload, "construction_wins"):
@@ -161,12 +159,12 @@ def parse_analysis(payload: dict, max_new_phrases: int = 2, known_constructions=
     missed = []
     for d in _dicts(payload, "missed_constructions"):
         name, before, after = canon(_text(d, "construction")), _text(d, "before"), _text(d, "after")
-        if name and before and after:
+        if name and before and after and (active is None or construction_key(name) in active):
             missed.append(MissedConstruction(name, before, after))
     new_cons = []
     for d in _dicts(payload, "new_constructions"):
         name, rule, example = _text(d, "construction"), _text(d, "rule"), _text(d, "example")
-        if name and rule and (known is None or _cons_key(name) not in known):
+        if name and rule and (known is None or construction_key(name) not in known):
             new_cons.append(NewConstruction(name, rule, example))
     return Analysis(
         wins=[Win(w["phrase"], w["quote"]) for w in payload.get("wins", [])],
@@ -184,6 +182,10 @@ def parse_analysis(payload: dict, max_new_phrases: int = 2, known_constructions=
 
 def _practicing(constructions) -> list[ConstructionInfo]:
     return [c for c in constructions if c.status != "adopted"]
+
+
+def _active_names(constructions) -> list[str]:
+    return [c.construction for c in constructions if c.status == "active"]
 
 
 class ClaudeAnalyzer:
@@ -211,7 +213,7 @@ class ClaudeAnalyzer:
             if getattr(block, "type", None) == "tool_use":
                 return parse_analysis(block.input, self._config.max_new_phrases,
                                       [c.construction for c in cons],
-                                      self._config.max_new_constructions)
+                                      self._config.max_new_constructions, _active_names(cons))
         raise RuntimeError("Claude did not return a tool_use block.")
 
 
@@ -337,7 +339,8 @@ class ClaudeCliAnalyzer:
             text = self._runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
             payload = extract_json_object(text)
         return parse_analysis(payload, self._config.max_new_phrases,
-                              [c.construction for c in cons], self._config.max_new_constructions)
+                              [c.construction for c in cons], self._config.max_new_constructions,
+                              _active_names(cons))
 
 
 # --- Phrase enrichment (definition + dev-context sample usage) --------------

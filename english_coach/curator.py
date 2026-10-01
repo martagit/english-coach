@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from typing import Callable
 from datetime import date as _date
 from pathlib import Path
 
 from english_coach.analyzer import run_claude_cli, extract_json_object
 from english_coach.coach_prompts import CONSTRUCTION_CURATOR_PREAMBLE, CURATOR_PREAMBLE
 from english_coach.profile import Profile
+from english_coach.vault import construction_key
 
 
 @dataclass(frozen=True)
@@ -18,6 +20,7 @@ class CurationKind:
     noun: str
     theme_examples: str
     show_missed: bool = False
+    match_key: Callable[[str], str] = str.strip  # how a curator decision's name finds its note
 
 
 PHRASES = CurationKind("Phrases", "phrase", CURATOR_PREAMBLE, "phrases",
@@ -25,7 +28,7 @@ PHRASES = CurationKind("Phrases", "phrase", CURATOR_PREAMBLE, "phrases",
 CONSTRUCTIONS = CurationKind("Constructions", "construction", CONSTRUCTION_CURATOR_PREAMBLE,
                              "grammar constructions",
                              "'suggesting', 'expectations', 'hypotheticals', 'linking ideas'",
-                             show_missed=True)
+                             show_missed=True, match_key=construction_key)
 
 
 def curator_system(profile: Profile, kind: CurationKind = PHRASES) -> str:
@@ -95,17 +98,17 @@ def _as_ordinal(v) -> int:
 
 
 def apply_guardrails(inventory: list[dict], decisions: list[dict],
-                     max_active: int) -> dict[str, dict]:
+                     max_active: int, key: Callable[[str], str] = str.strip) -> dict[str, dict]:
     """Match decisions to the inventory and enforce the active-set cap.
 
     Unknown phrases are ignored; phrases missing from the decisions are simply
     absent (their notes keep current values). If more than max_active are marked
     active, the excess (worst priority, then least recently used/introduced)
     are demoted to backlog. Returns note_name -> {status, priority, theme}."""
-    by_phrase = {it["phrase"]: it for it in inventory}
+    by_phrase = {key(it["phrase"]): it for it in inventory}
     updates: dict[str, dict] = {}
     for d in decisions:
-        it = by_phrase.get(d["phrase"])
+        it = by_phrase.get(key(d["phrase"]))
         if it is None:
             continue
         updates[it["note_name"]] = {"status": d["status"], "priority": d["priority"],
@@ -144,5 +147,5 @@ def curate(vault: Path, runner=None, max_active: int = 12,
         text = runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
         payload = extract_json_object(text)
     decisions = parse_curation(payload)
-    updates = apply_guardrails(inventory, decisions, max_active)
+    updates = apply_guardrails(inventory, decisions, max_active, kind.match_key)
     return vault_mod.apply_curation(vault, updates, folder=kind.folder)
