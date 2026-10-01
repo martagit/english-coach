@@ -64,6 +64,30 @@ def render_daily_body(analysis: Analysis) -> str:
         lines.append("- (none this time)")
     lines.append("")
 
+    lines.append("## Constructions used")
+    if analysis.construction_wins:
+        for w in analysis.construction_wins:
+            lines.append(f"- {_link(w.phrase)} — \"{w.quote}\"")
+    else:
+        lines.append("- (none this time)")
+    lines.append("")
+
+    lines.append("## Try this construction")
+    if analysis.missed_constructions:
+        lines.append("| construction | you wrote | try |")
+        lines.append("| --- | --- | --- |")
+        for m in analysis.missed_constructions:
+            lines.append(f"| {_link(m.construction)} | {_cell(m.before)} | {_cell(m.after)} |")
+    else:
+        lines.append("(none this time)")
+    lines.append("")
+
+    if analysis.new_constructions:
+        lines.append("## New constructions")
+        for nc in analysis.new_constructions:
+            lines.append(f"- {_link(nc.construction)} — {nc.rule} (e.g. \"{nc.example}\")")
+        lines.append("")
+
     lines.append("## Snapshot")
     if analysis.snapshot:
         for s in analysis.snapshot:
@@ -82,6 +106,8 @@ def write_daily_note(vault: Path, window: Window, prompt_count: int, analysis: A
         "to": window.days[-1],
         "prompt_count": prompt_count,
         "reused": list(analysis.reused_phrases),
+        "constructions_used": list(dict.fromkeys(w.phrase for w in analysis.construction_wins)),
+        "constructions_missed": [m.construction for m in analysis.missed_constructions],
     }
     write_note(path, frontmatter, render_daily_body(analysis))
     return path
@@ -226,6 +252,8 @@ def write_quiet_note(vault: Path, window: Window) -> Path:
         "to": window.days[-1],
         "prompt_count": 0,
         "reused": [],
+        "constructions_used": [],
+        "constructions_missed": [],
     }
     write_note(path, frontmatter, "Quiet day — no substantive prompts to coach.")
     return path
@@ -243,41 +271,59 @@ def apply_analysis_notes(vault: Path, analysis: Analysis, introduced: _date, day
     for r in analysis.recurring:
         ensure_pattern_note(vault, r.pattern)
         append_pattern_examples(vault, r.pattern, [(r.before, r.after)], day_label)
+    from english_coach import constructions  # local: constructions imports this module
+    constructions.apply_construction_notes(vault, analysis, introduced, day_label)
 
 
 from english_coach.models import PhraseInfo
 
 
-def recompute_reuse(vault: Path, adopted_threshold: int = 3) -> None:
-    daily_dir = Path(vault) / "Daily"
+def _count_daily(vault: Path, key: str) -> tuple[dict[str, int], dict[str, _date]]:
+    """Occurrences of each name under frontmatter `key` across daily notes, plus last date."""
     counts: dict[str, int] = {}
-    last_used: dict[str, _date] = {}
+    last: dict[str, _date] = {}
+    daily_dir = Path(vault) / "Daily"
     if daily_dir.exists():
         for daily in sorted(daily_dir.glob("*.md")):
             fm, _ = read_note(daily)
             to = fm.get("to")
-            for phrase in (fm.get("reused") or []):
-                key = note_name(phrase)
-                counts[key] = counts.get(key, 0) + 1
-                if to and (key not in last_used or to > last_used[key]):
-                    last_used[key] = to
+            for name in (fm.get(key) or []):
+                k = note_name(name)
+                counts[k] = counts.get(k, 0) + 1
+                if to and (k not in last or to > last[k]):
+                    last[k] = to
+    return counts, last
 
-    phrases_dir = Path(vault) / "Phrases"
-    if not phrases_dir.exists():
+
+def _apply_reuse(folder: Path, counts: dict, last_used: dict, threshold: int,
+                 missed: dict | None = None) -> None:
+    if not folder.exists():
         return
-    for pnote in phrases_dir.glob("*.md"):
-        fm, body = read_note(pnote)
-        key = pnote.stem
+    for note in folder.glob("*.md"):
+        fm, body = read_note(note)
+        key = note.stem
         c = counts.get(key, 0)
         fm["reuse_count"] = c
+        if missed is not None:
+            fm["missed_count"] = missed.get(key, 0)
         status = fm.get("status")
-        if c >= adopted_threshold or status == "adopted":
+        if c >= threshold or status == "adopted":
             fm["status"] = "adopted"  # terminal: reached threshold once, stays adopted
         elif status not in ("active", "backlog"):
             fm["status"] = "backlog"  # migrate legacy 'learning' / missing status
         if key in last_used:
             fm["last_used"] = last_used[key]
-        write_note(pnote, fm, body)
+        write_note(note, fm, body)
+
+
+def recompute_reuse(vault: Path, adopted_threshold: int = 3,
+                    construction_adopted_threshold: int = 5) -> None:
+    counts, last_used = _count_daily(vault, "reused")
+    _apply_reuse(Path(vault) / "Phrases", counts, last_used, adopted_threshold)
+    c_counts, c_last = _count_daily(vault, "constructions_used")
+    missed, _ = _count_daily(vault, "constructions_missed")
+    _apply_reuse(Path(vault) / "Constructions", c_counts, c_last,
+                 construction_adopted_threshold, missed)
 
 
 def read_phrasebook(vault: Path) -> list[PhraseInfo]:
@@ -299,7 +345,7 @@ _DASHBOARD = """# English Coaching
 
 Your automated English-coaching vault. The curator keeps a small active set;
 everything else waits in the backlog. Open the graph view to see how days,
-phrases, and patterns connect.
+phrases, constructions and patterns connect.
 
 ## Currently practicing
 
@@ -338,10 +384,38 @@ WHERE status = "adopted"
 SORT reuse_count DESC
 ```
 
+## Constructions — practicing
+
+```dataview
+TABLE priority, theme, reuse_count, missed_count, last_used
+FROM "Constructions"
+WHERE status = "active"
+SORT priority ASC
+```
+
+## Constructions — backlog
+
+```dataview
+TABLE priority, theme
+FROM "Constructions"
+WHERE status = "backlog"
+SORT priority ASC
+LIMIT 15
+```
+
+## Constructions — adopted
+
+```dataview
+TABLE reuse_count, last_used
+FROM "Constructions"
+WHERE status = "adopted"
+SORT reuse_count DESC
+```
+
 ## Recent days
 
 ```dataview
-TABLE prompt_count, reused
+TABLE prompt_count, reused, constructions_used
 FROM "Daily"
 SORT to DESC
 LIMIT 14
@@ -388,35 +462,38 @@ def read_phrase_entries(vault: Path) -> list[dict]:
 # --- Curation (status/priority/theme lifecycle) ------------------------------
 
 
-def read_curation_inventory(vault: Path) -> list[dict]:
-    """One entry per NON-adopted phrase note, with the metadata the curator needs."""
-    phrases_dir = Path(vault) / "Phrases"
+def read_curation_inventory(vault: Path, folder: str = "Phrases",
+                            name_key: str = "phrase") -> list[dict]:
+    """One entry per NON-adopted note in `folder`, with the metadata the curator needs.
+    The item's name is always under "phrase" (the curator's JSON protocol)."""
+    notes_dir = Path(vault) / folder
     out: list[dict] = []
-    if not phrases_dir.exists():
+    if not notes_dir.exists():
         return out
-    for pnote in sorted(phrases_dir.glob("*.md")):
+    for pnote in sorted(notes_dir.glob("*.md")):
         fm, _ = read_note(pnote)
         if fm.get("status") == "adopted":
             continue
         out.append({
             "note_name": pnote.stem,
-            "phrase": fm.get("phrase", pnote.stem),
+            "phrase": fm.get(name_key, pnote.stem),
             "status": fm.get("status", "backlog"),
             "priority": fm.get("priority"),
             "theme": fm.get("theme"),
             "reuse_count": int(fm.get("reuse_count", 0)),
+            "missed_count": int(fm.get("missed_count", 0)),
             "introduced": fm.get("introduced"),
             "last_used": fm.get("last_used"),
         })
     return out
 
 
-def apply_curation(vault: Path, updates: dict[str, dict]) -> int:
+def apply_curation(vault: Path, updates: dict[str, dict], folder: str = "Phrases") -> int:
     """Apply curator decisions: updates maps note_name -> {status, priority, theme}.
 
     Frontmatter-only; adopted notes and unknown note names are skipped. Returns
     the number of notes whose frontmatter actually changed."""
-    phrases_dir = Path(vault) / "Phrases"
+    phrases_dir = Path(vault) / folder
     count = 0
     for name, upd in updates.items():
         path = phrases_dir / f"{name}.md"
