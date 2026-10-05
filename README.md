@@ -53,9 +53,7 @@ sentences rewritten with it under **Try this construction** in the daily note. A
 counts as adopted after you've used it on five different days.
 
 Each pattern note covers one rule ("Verb + preposition", "Articles"), and every correction
-shows as one sentence with the change marked: `paste ~~to~~ **into the** team channel`. Each
-run first brings older notes to this format. That's done in code, with no Claude call, and only
-the example lines and fix tables change.
+shows as one sentence with the change marked: paste ~~to~~ **into the** team channel.
 
 ## Privacy
 
