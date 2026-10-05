@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 from english_coach.fix_markup import parse_fix, render_fix, text_key
@@ -112,6 +113,9 @@ _OLD_TABLES = {("before", "after"): ("| fix |", 0),
                ("construction", "you wrote", "try"): ("| construction | fix |", 1)}
 
 
+_COACH_SECTIONS = {"Focus pattern", "Recurring patterns", "Try this construction"}
+
+
 def _cells(row: str) -> list[str]:
     return [c.strip() for c in _CELL_SEP.split(row.strip()[1:-1])]
 
@@ -121,11 +125,14 @@ def reformat_daily_body(body: str) -> str:
     columns. Every other line is left alone; already-converted tables are unchanged."""
     out: list[str] = []
     keep = None  # leading cells kept as they are, while inside an old table
+    section = ""
     for line in body.split("\n"):
         s = line.strip()
+        if s.startswith("## "):
+            section = s[3:].strip()
         is_row = s.startswith("|") and s.endswith("|") and len(s) > 1
         hdr = tuple(_cells(s)) if is_row else ()
-        if hdr in _OLD_TABLES:
+        if hdr in _OLD_TABLES and section in _COACH_SECTIONS:
             new_header, keep = _OLD_TABLES[hdr]
             out.append(new_header)
             continue
@@ -316,15 +323,29 @@ def append_pattern_examples_tagged(vault: Path, pattern: str,
     fm, body = read_note(path)
     pairs = _parse_pattern_examples(body)
     seen = {(text_key(b), text_key(a)) for b, a, _ in pairs}
-    changed = False
+    new = []
     for b, a, t in rows:
         b, a = b.strip(), a.strip()
         if (text_key(b), text_key(a)) not in seen:
             seen.add((text_key(b), text_key(a)))
-            pairs.append((b, a, t))
-            changed = True
-    if changed:
-        write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs))
+            new.append((b, a, t))
+    if not new:
+        return
+    lines = body.split("\n")
+    try:
+        i = next(k for k, line in enumerate(lines) if line.strip() == _EX_HEADER)
+    except StopIteration:  # old dated-table note: rebuild it in the current format
+        write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs + new))
+        return
+    # Insert at the end of the examples section, keeping the learner's own lines and sections.
+    j = i + 1
+    while j < len(lines) and not lines[j].strip().startswith("#"):
+        j += 1
+    while j > i + 1 and not lines[j - 1].strip():
+        j -= 1
+    kept = [line for line in lines[i + 1:j] if line.strip() != "_(no examples yet)_"]
+    lines[i + 1:j] = kept + [example_line(b, a, t) for b, a, t in new]
+    write_note(path, fm, "\n".join(lines))
 
 
 def read_known_patterns(vault: Path) -> list[tuple[str, str]]:
@@ -355,15 +376,18 @@ def reformat_notes(vault: Path) -> int:
         if not d.is_dir():
             continue
         for path in sorted(d.glob("*.md")):
-            fm, body = read_note(path)
-            new = convert(body)
-            if new == body:
-                continue
-            if fm:
-                write_note(path, fm, new)
-            else:
-                path.write_text(new.strip() + "\n", encoding="utf-8")
-            count += 1
+            try:
+                fm, body = read_note(path)
+                new = convert(body)
+                if new == body:
+                    continue
+                if fm:
+                    write_note(path, fm, new)
+                else:
+                    path.write_text(new.strip() + "\n", encoding="utf-8")
+                count += 1
+            except Exception as exc:  # one unreadable note must not block the rest
+                print(f"Reformat skipped {folder}/{path.name}: {exc}", file=sys.stderr)
     return count
 
 

@@ -147,3 +147,9 @@ def test_reformat_daily_body_keeps_escaped_pipes():
     row = reformat_daily_body(body).splitlines()[-1]
     cell = row.split(" | ", 1)[1].rsplit(" |", 1)[0]
     assert parse_fix(cell.replace("\|", "|")) == ("a | b c", "a or b c")
+
+
+def test_reformat_daily_body_leaves_tables_in_other_sections():
+    from english_coach.vault import reformat_daily_body
+    body = "## My notes\n| before | after |\n| --- | --- |\n| my | own table |"
+    assert reformat_daily_body(body) == body

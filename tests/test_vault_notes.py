@@ -287,3 +287,36 @@ def test_reformat_notes_keeps_note_without_frontmatter(tmp_path):
 def test_reformat_notes_empty_vault(tmp_path):
     from english_coach.vault import reformat_notes
     assert reformat_notes(tmp_path) == 0
+
+
+def test_append_keeps_learner_lines_in_pattern_note(tmp_path):
+    from english_coach.frontmatter import write_note
+    from english_coach.vault import append_pattern_examples_tagged
+    write_note(tmp_path / "Patterns" / "Articles.md", {"pattern": "Articles"},
+               "# Articles\n\n**Rule:** r\n\n## Before → after\n- use **the** MCP  · _09-01_\n"
+               "- my own reminder: *check* nouns\n\n## My notes\nkeep me")
+    append_pattern_examples_tagged(tmp_path, "Articles", [("run server", "run the server", "09-02")])
+    _, body = read_note(tmp_path / "Patterns" / "Articles.md")
+    assert "- my own reminder: *check* nouns" in body and "## My notes\nkeep me" in body
+    assert body.index("_09-01_") < body.index("_09-02_") < body.index("## My notes")
+
+
+def test_append_replaces_placeholder(tmp_path):
+    from english_coach.vault import append_pattern_examples_tagged
+    ensure_pattern_note(tmp_path, "Articles", "r")
+    append_pattern_examples_tagged(tmp_path, "Articles", [("run server", "run the server", "09-02")])
+    _, body = read_note(tmp_path / "Patterns" / "Articles.md")
+    assert "_(no examples yet)_" not in body and "run **the** server" in body
+
+
+def test_reformat_notes_skips_an_unreadable_note_and_continues(tmp_path, capsys):
+    from english_coach.frontmatter import write_note
+    from english_coach.vault import reformat_notes
+    bad = tmp_path / "Patterns" / "A broken.md"
+    bad.parent.mkdir(parents=True)
+    bad.write_text("---\npattern: [unclosed\n---\n\n## Before → after\n- ✗ a → ✓ the a\n", encoding="utf-8")
+    write_note(tmp_path / "Patterns" / "B good.md", {"pattern": "B good"},
+               "# B\n\n## Before → after\n- ✗ use mcp → ✓ use the mcp")
+    assert reformat_notes(tmp_path) == 1
+    assert "use **the** mcp" in read_note(tmp_path / "Patterns" / "B good.md")[1]
+    assert "A broken.md" in capsys.readouterr().err
