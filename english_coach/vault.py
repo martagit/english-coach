@@ -341,6 +341,32 @@ def read_known_patterns(vault: Path) -> list[tuple[str, str]]:
     return out
 
 
+def reformat_notes(vault: Path) -> int:
+    """Bring older notes to the inline before → after format: example lines in pattern and
+    construction notes, and the before/after tables in daily notes. Deterministic and
+    idempotent; writes only files that change. Returns the number of files written."""
+    from english_coach import constructions  # local: constructions imports this module
+    jobs = (("Patterns", lambda body: reformat_example_lines(body, _EX_HEADER)),
+            ("Constructions", constructions.reformat_construction_body),
+            ("Daily", reformat_daily_body))
+    count = 0
+    for folder, convert in jobs:
+        d = Path(vault) / folder
+        if not d.is_dir():
+            continue
+        for path in sorted(d.glob("*.md")):
+            fm, body = read_note(path)
+            new = convert(body)
+            if new == body:
+                continue
+            if fm:
+                write_note(path, fm, new)
+            else:
+                path.write_text(new.strip() + "\n", encoding="utf-8")
+            count += 1
+    return count
+
+
 def write_quiet_note(vault: Path, window: Window) -> Path:
     basename = note_basename(window.days)
     path = Path(vault) / "Daily" / f"{basename}.md"

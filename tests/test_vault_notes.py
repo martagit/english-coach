@@ -246,3 +246,44 @@ def test_reformat_example_lines_only_touches_old_lines_in_section():
     assert "- my own reminder: check every noun" in out
     assert "## My notes\n- ✗ keep → ✓ this one" in out
     assert reformat_example_lines(out, "## Before → after") == out
+
+
+def _old_vault(tmp_path):
+    from english_coach.frontmatter import write_note
+    write_note(tmp_path / "Patterns" / "Articles.md", {"pattern": "Articles", "enriched": True},
+               "# Articles\n\n**Rule:** r\n\n## Before → after\n- ✗ use mcp → ✓ use the mcp  · _2026-09-01_")
+    write_note(tmp_path / "Daily" / "2026-09-01.md", {"from": "2026-09-01", "prompt_count": 1},
+               "## Recurring patterns\n| pattern | before | after |\n| --- | --- | --- |\n"
+               "| [[Articles]] | use mcp | use the mcp |")
+    from english_coach import constructions as c
+    c.ensure_construction_note(tmp_path, "unless", date(2026, 9, 1), rule="r")
+    p = tmp_path / "Constructions" / "unless.md"
+    p.write_text(p.read_text(encoding="utf-8").replace(
+        "_(nothing yet)_", "- ✗ wait if not green → ✓ wait unless green  · _09-01_"), encoding="utf-8")
+
+
+def test_reformat_notes_converts_every_kind_once(tmp_path):
+    from english_coach.vault import reformat_notes
+    _old_vault(tmp_path)
+    assert reformat_notes(tmp_path) == 3
+    fm, art = read_note(tmp_path / "Patterns" / "Articles.md")
+    assert fm == {"pattern": "Articles", "enriched": True}
+    assert "- use **the** mcp  · _09-01_" in art
+    assert "| [[Articles]] | use **the** mcp |" in read_note(tmp_path / "Daily" / "2026-09-01.md")[1]
+    assert "- wait ~~if not~~ **unless** green" in read_note(tmp_path / "Constructions" / "unless.md")[1]
+    assert reformat_notes(tmp_path) == 0
+
+
+def test_reformat_notes_keeps_note_without_frontmatter(tmp_path):
+    from english_coach.vault import reformat_notes
+    p = tmp_path / "Patterns" / "Loose.md"
+    p.parent.mkdir(parents=True)
+    p.write_text("# Loose\n\n## Before → after\n- ✗ a b → ✓ a the b\n", encoding="utf-8")
+    assert reformat_notes(tmp_path) == 1
+    text = p.read_text(encoding="utf-8")
+    assert not text.startswith("---") and "- a **the** b" in text
+
+
+def test_reformat_notes_empty_vault(tmp_path):
+    from english_coach.vault import reformat_notes
+    assert reformat_notes(tmp_path) == 0

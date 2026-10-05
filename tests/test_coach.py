@@ -180,3 +180,24 @@ def test_construction_curator_and_enricher_are_called_and_fail_soft(tmp_path, ca
 def test_quiet_day_still_seeds_constructions(tmp_path):
     run(_cfg(tmp_path), FakeSource([_p("ok")]), FakeAnalyzer(_empty_analysis()), now_utc=NOW)
     assert (tmp_path / "Constructions" / "be supposed to.md").exists()
+
+
+def test_run_reformats_old_notes_first(tmp_path):
+    from english_coach.frontmatter import read_note, write_note
+    write_note(tmp_path / "Patterns" / "Articles.md", {"pattern": "Articles"},
+               "# Articles\n\n**Rule:** r\n\n## Before → after\n- ✗ use mcp → ✓ use the mcp")
+    run(_cfg(tmp_path), FakeSource([]), FakeAnalyzer(_empty_analysis()), now_utc=NOW)
+    assert "- use **the** mcp" in read_note(tmp_path / "Patterns" / "Articles.md")[1]
+
+
+def test_run_survives_reformat_failure(tmp_path, monkeypatch, capsys):
+    from english_coach import coach
+
+    def boom(v):
+        raise OSError("locked")
+
+    monkeypatch.setattr(coach.vault, "reformat_notes", boom)
+    prompts = [_p("Why we need here the reference?")]
+    assert run(_cfg(tmp_path), FakeSource(prompts), FakeAnalyzer(_empty_analysis()),
+               now_utc=NOW) == "wrote:2026-07-05"
+    assert "Reformat failed (skipped): locked" in capsys.readouterr().err
