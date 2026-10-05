@@ -45,20 +45,20 @@ def render_daily_body(analysis: Analysis) -> str:
     if fp:
         lines.append(f"**{_link(fp.pattern)}** — {fp.explanation}")
         lines.append("")
-        lines.append("| before | after |")
-        lines.append("| --- | --- |")
+        lines.append("| fix |")
+        lines.append("| --- |")
         for ex in fp.examples:
-            lines.append(f"| {_cell(ex.before)} | {_cell(ex.after)} |")
+            lines.append(f"| {_cell(render_fix(ex.before, ex.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
 
     lines.append("## Recurring patterns")
     if analysis.recurring:
-        lines.append("| pattern | before | after |")
-        lines.append("| --- | --- | --- |")
+        lines.append("| pattern | fix |")
+        lines.append("| --- | --- |")
         for r in analysis.recurring:
-            lines.append(f"| {_link(r.pattern)} | {_cell(r.before)} | {_cell(r.after)} |")
+            lines.append(f"| {_link(r.pattern)} | {_cell(render_fix(r.before, r.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
@@ -81,10 +81,10 @@ def render_daily_body(analysis: Analysis) -> str:
 
     lines.append("## Try this construction")
     if analysis.missed_constructions:
-        lines.append("| construction | you wrote | try |")
-        lines.append("| --- | --- | --- |")
+        lines.append("| construction | fix |")
+        lines.append("| --- | --- |")
         for m in analysis.missed_constructions:
-            lines.append(f"| {_link(m.construction)} | {_cell(m.before)} | {_cell(m.after)} |")
+            lines.append(f"| {_link(m.construction)} | {_cell(render_fix(m.before, m.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
@@ -103,6 +103,45 @@ def render_daily_body(analysis: Analysis) -> str:
         lines.append("- (none this time)")
 
     return "\n".join(lines)
+
+
+_CELL_SEP = re.compile(r'(?<!\\)\|')
+# Old daily table header → (new header, number of leading cells kept as they are)
+_OLD_TABLES = {("before", "after"): ("| fix |", 0),
+               ("pattern", "before", "after"): ("| pattern | fix |", 1),
+               ("construction", "you wrote", "try"): ("| construction | fix |", 1)}
+
+
+def _cells(row: str) -> list[str]:
+    return [c.strip() for c in _CELL_SEP.split(row.strip()[1:-1])]
+
+
+def reformat_daily_body(body: str) -> str:
+    """Convert old before/after daily tables (also column-aligned ones) to the inline-fix
+    columns. Every other line is left alone; already-converted tables are unchanged."""
+    out: list[str] = []
+    keep = None  # leading cells kept as they are, while inside an old table
+    for line in body.split("\n"):
+        s = line.strip()
+        is_row = s.startswith("|") and s.endswith("|") and len(s) > 1
+        hdr = tuple(_cells(s)) if is_row else ()
+        if hdr in _OLD_TABLES:
+            new_header, keep = _OLD_TABLES[hdr]
+            out.append(new_header)
+            continue
+        if keep is not None and is_row:
+            cells = _cells(s)
+            if all(set(c) <= set("-: ") for c in cells):
+                out.append("| " + " | ".join(["---"] * (keep + 1)) + " |")
+            elif len(cells) == keep + 2:
+                b, a = (c.replace("\\|", "|") for c in cells[keep:])
+                out.append("| " + " | ".join(cells[:keep] + [_cell(render_fix(b, a))]) + " |")
+            else:
+                out.append(line)
+            continue
+        keep = None
+        out.append(line)
+    return "\n".join(out)
 
 
 def write_daily_note(vault: Path, window: Window, prompt_count: int, analysis: Analysis) -> Path:
