@@ -148,7 +148,7 @@ def format_plan(plan: ResplitPlan, vault: Path) -> str:
     return "\n".join(lines) or "No pattern notes."
 
 
-_ROW_RE = re.compile(r'^\| \[\[(?P<name>[^\]]+)\]\] \|(?P<rest>.*)$')
+_ROW_RE = re.compile(r'^\|\s*\[\[(?P<name>[^\]]+)\]\]\s*\|(?P<rest>.*)$')  # tolerates aligned tables
 _FOCUS_RE = re.compile(r'^\*\*\[\[(?P<name>[^\]]+)\]\]\*\*')
 _CELL_SEP = re.compile(r'(?<!\\)\|')
 

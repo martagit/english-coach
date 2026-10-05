@@ -325,3 +325,11 @@ def test_apply_trims_partly_split_note_and_backs_it_up(tmp_path):
     assert "| [[Articles]] | use mcp |" in body
     assert "| [[Verb + preposition]] | a misfit here |" in body
     assert (res.notes_split, res.moved, res.dropped) == (2, 3, 1)
+
+
+def test_rewrite_matches_column_aligned_table_rows(tmp_path):
+    body = ("## Recurring patterns\n| pattern           | before   | after |\n| --- | --- | --- |\n"
+            "| [[Missing words]]      | do we seed anything directly to DB?    | into the DB |")
+    path = _daily(tmp_path, body)
+    resplit.rewrite_daily_links(tmp_path, {"Missing words": {"do we seed anything directly to DB?": "Prepositions"}})
+    assert "| [[Prepositions]]      | do we seed" in read_note(path)[1]
