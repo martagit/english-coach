@@ -196,3 +196,48 @@ def test_rewrite_untouched_notes_are_not_written(tmp_path):
     assert resplit.rewrite_daily_links(tmp_path, MOVES) == 0
     assert path.read_text(encoding="utf-8") == before
     assert resplit.rewrite_daily_links(tmp_path / "nowhere", MOVES) == 0
+
+
+def test_apply_moves_examples_deletes_note_relinks_and_enriches(tmp_path):
+    v = _vault(tmp_path)
+    write_note(v / "Patterns" / "Articles.md",
+               {**read_note(v / "Patterns" / "Articles.md")[0], "enriched": True},
+               read_note(v / "Patterns" / "Articles.md")[1])
+    daily = _daily(v)
+    plan = resplit.plan_resplit(v, lambda items: GOOD)
+    asked = []
+
+    def enricher(items):
+        asked.extend(i["pattern"] for i in items)
+        return {"Verb + preposition": {"rule": "Use in/into for containers."}}
+
+    res = resplit.apply_resplit(v, plan, enricher)
+    assert (res.notes_split, res.moved, res.dropped, res.created, res.dailies, res.enriched) == (1, 2, 1, 1, 1, 1)
+    assert not (v / "Patterns" / "Missing words.md").exists()
+    assert asked == ["Verb + preposition"]                      # Articles already enriched
+    _, vp = read_note(v / "Patterns" / "Verb + preposition.md")
+    assert "**Rule:** Use in/into for containers." in vp
+    assert "✓ change anything in the framework  · _09-16_" in vp
+    _, art = read_note(v / "Patterns" / "Articles.md")
+    assert "**Rule:** use the" in art and "· _09-24_" in art and "use mcp" in art
+    assert "It total" not in art and "It total" not in vp
+    assert "| [[Articles]] | get familiar with a new spec |" in read_note(daily)[1]
+
+
+def test_apply_leaves_skipped_and_kept_notes_alone(tmp_path):
+    v = _vault(tmp_path)
+    before = {p.name: p.read_text(encoding="utf-8") for p in (v / "Patterns").glob("*.md")}
+    plan = resplit.plan_resplit(v, lambda items: {"Missing words": {}})   # incomplete → skipped
+    res = resplit.apply_resplit(v, plan, lambda items: 1 / 0)
+    assert res == resplit.ResplitResult()
+    assert {p.name: p.read_text(encoding="utf-8") for p in (v / "Patterns").glob("*.md")} == before
+
+
+def test_apply_with_empty_plan_writes_nothing(tmp_path):
+    v = _vault(tmp_path)
+    daily = _daily(v)
+    snapshot = daily.read_text(encoding="utf-8")
+    res = resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: {}), lambda items: 1 / 0)
+    assert res == resplit.ResplitResult()
+    assert (v / "Patterns" / "Missing words.md").exists()
+    assert daily.read_text(encoding="utf-8") == snapshot

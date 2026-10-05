@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from english_coach.frontmatter import read_note, write_note
-from english_coach.vault import _extract_rule, _parse_pattern_examples, note_name
+from english_coach.vault import (
+    _extract_rule, _parse_pattern_examples, append_pattern_examples_tagged, enrich_pattern_notes,
+    ensure_pattern_note, note_name,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +37,16 @@ class ResplitPlan:
     splits: list[NoteSplit]
     kept: list[str]
     skipped: list[tuple[str, str]]  # (pattern, reason)
+
+
+@dataclass
+class ResplitResult:
+    notes_split: int = 0
+    moved: int = 0
+    dropped: int = 0
+    created: int = 0
+    dailies: int = 0
+    enriched: int = 0
 
 
 def _norm(text: str) -> str:
@@ -178,3 +191,32 @@ def rewrite_daily_links(vault: Path, moves: dict) -> int:
             write_note(path, fm, new)
             count += 1
     return count
+
+
+def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
+    """Move each split note's examples to their targets (keeping date tags), delete the
+    note, re-link daily notes, then write Rules for the newly created notes."""
+    res = ResplitResult()
+    if not plan.splits:
+        return res
+    folder = Path(vault) / "Patterns"
+    for s in plan.splits:
+        rows: dict[str, list[tuple[str, str, str]]] = {}
+        for m in s.moves:
+            if m.target is None:
+                res.dropped += 1
+                continue
+            if not (folder / f"{note_name(m.target)}.md").exists():
+                res.created += 1
+            ensure_pattern_note(vault, m.target)
+            rows.setdefault(m.target, []).append((m.before, m.after, m.tag))
+            res.moved += 1
+        for target, items in rows.items():
+            append_pattern_examples_tagged(vault, target, items)
+        s.path.unlink()
+        res.notes_split += 1
+    res.dailies = rewrite_daily_links(
+        vault, {note_name(s.pattern): {_norm(m.before): m.target for m in s.moves}
+                for s in plan.splits})
+    res.enriched = enrich_pattern_notes(vault, enricher)
+    return res
