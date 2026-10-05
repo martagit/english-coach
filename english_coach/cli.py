@@ -279,7 +279,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _utf8_output() -> None:
+    """Notes and plans contain →, ✗ and the learner's own text: a Windows pipe or scheduled
+    task defaults to cp1252, where printing them raises UnicodeEncodeError."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", None) or "").replace("-", "").lower()
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+
+
 def main(argv: list[str] | None = None, env: dict | None = None) -> int:
+    _utf8_output()
     env = dict(os.environ) if env is None else env
     args = build_parser().parse_args(argv)
     # `run --config-dir/--claude-config-dir` let the OS scheduler, which doesn't

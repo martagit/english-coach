@@ -6,13 +6,15 @@ apply_resplit moves the examples, re-links old daily notes and moves the broad n
 from __future__ import annotations
 
 import re
+import shutil
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from english_coach.frontmatter import read_note, write_note
 from english_coach.vault import (
-    _extract_rule, _parse_pattern_examples, append_pattern_examples_tagged, enrich_pattern_notes,
+    _extract_rule, _parse_pattern_examples, _render_pattern_note, append_pattern_examples_tagged,
+    enrich_pattern_notes,
     ensure_pattern_note, note_name,
 )
 
@@ -79,20 +81,29 @@ def plan_resplit(vault: Path, resplitter) -> ResplitPlan:
     raw = resplitter([{"pattern": p, "rule": r, "examples": [(b, a) for b, a, _ in ex]}
                       for p, _, r, ex in notes])
     existing = {_key(p): p for p, _, _, _ in notes}
-    splitting = {_key(p) for p, _, _, _ in notes if p in raw}
+    # Notes the model wants emptied (no example stays) can't receive examples.
+    emptied = {_key(p) for p, _, _, _ in notes
+               if p in raw and not any(_stays(t, p) for t in raw[p].values())}
     for pattern, path, _, examples in notes:
         if pattern not in raw:
             plan.kept.append(pattern)
             continue
-        moves, reason = _moves(pattern, examples, raw[pattern], existing, splitting)
+        moves, reason = _moves(pattern, examples, raw[pattern], existing, emptied)
         if reason:
             plan.skipped.append((pattern, reason))
+        elif all(_stays(m.target, pattern) for m in moves):
+            plan.kept.append(pattern)
         else:
             plan.splits.append(NoteSplit(pattern, path, moves))
     return plan
 
 
-def _moves(pattern, examples, answer, existing, splitting):
+def _stays(target, pattern: str) -> bool:
+    """An example whose target is its own note stays where it is."""
+    return isinstance(target, str) and bool(note_name(target)) and _key(target) == _key(pattern)
+
+
+def _moves(pattern, examples, answer, existing, emptied):
     if not examples:
         return [], "no examples"
     answer = {_norm(k): v for k, v in answer.items()}
@@ -105,10 +116,8 @@ def _moves(pattern, examples, answer, existing, splitting):
             if not isinstance(target, str) or not note_name(target):
                 return [], f"invalid target: {target!r}"
             target = existing.get(_key(target), target.strip())
-            if _key(target) == _key(pattern):
-                return [], f"invalid target: {target}"
-            if _key(target) in splitting:
-                return [], f"target is itself being split: {target}"
+            if _key(target) != _key(pattern) and _key(target) in emptied:
+                return [], f"target is being emptied: {target}"
         moves.append(Move(b, a, t, target))
     return moves, ""
 
@@ -121,8 +130,11 @@ def format_plan(plan: ResplitPlan, vault: Path) -> str:
     folder = Path(vault) / "Patterns"
     lines = []
     for s in plan.splits:
-        lines.append(f"{s.pattern} → split")
+        stay = sum(_stays(m.target, s.pattern) for m in s.moves)
+        lines.append(f"{s.pattern} → split" + (f" ({stay} stays)" if stay else ""))
         for m in s.moves:
+            if _stays(m.target, s.pattern):
+                continue
             if m.target is None:
                 dest = "drop"
             else:
@@ -200,9 +212,14 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
     if not plan.splits:
         return res
     folder = Path(vault) / "Patterns"
+    for s in plan.splits:  # back up notes that will be trimmed, before anything is written
+        if any(_stays(m.target, s.pattern) for m in s.moves):
+            shutil.copy2(s.path, _trash_path(vault, s.path))
     for s in plan.splits:
         rows: dict[str, list[tuple[str, str, str]]] = {}
         for m in s.moves:
+            if _stays(m.target, s.pattern):
+                continue
             if m.target is None:
                 res.dropped += 1
                 continue
@@ -217,24 +234,36 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
     # so a re-run can finish (re-appending is deduplicated).
     moves: dict[str, dict] = {}
     for s in plan.splits:
-        targets = {_norm(m.before): m.target for m in s.moves}
+        targets = {_norm(m.before): s.path.stem if _stays(m.target, s.pattern) else m.target
+                   for m in s.moves}
         moves[note_name(s.pattern)] = targets
         moves[s.path.stem] = targets  # a note renamed in Obsidian is linked by its file name
     res.dailies = rewrite_daily_links(vault, moves)
     for s in plan.splits:
-        _to_trash(vault, s.path)
+        if any(_stays(m.target, s.pattern) for m in s.moves):
+            _trim(vault, s)
+        else:
+            s.path.rename(_trash_path(vault, s.path))
         res.notes_split += 1
     res.enriched = enrich_pattern_notes(vault, enricher)
     return res
 
 
-def _to_trash(vault: Path, path: Path) -> None:
-    """Move a note to the vault's `.trash/` (Obsidian's own trash) instead of deleting it,
-    so hand-written content the parser didn't pick up can be recovered."""
+def _trim(vault: Path, s: NoteSplit) -> None:
+    """Remove the examples that moved away (the original was backed up to `.trash/`)."""
+    fm, body = read_note(s.path)
+    gone = {(m.before, m.after) for m in s.moves if not _stays(m.target, s.pattern)}
+    pairs = [p for p in _parse_pattern_examples(body) if (p[0], p[1]) not in gone]
+    write_note(s.path, fm, _render_pattern_note(s.pattern, _extract_rule(body), pairs))
+
+
+def _trash_path(vault: Path, path: Path) -> Path:
+    """A free name in the vault's `.trash/` (Obsidian's own trash): notes are moved or
+    backed up there instead of deleted, so hand-written content can be recovered."""
     trash = Path(vault) / ".trash"
     trash.mkdir(exist_ok=True)
     dest, n = trash / path.name, 0
     while dest.exists():
         n += 1
         dest = trash / f"{path.stem} {n}{path.suffix}"
-    path.rename(dest)
+    return dest

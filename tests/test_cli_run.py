@@ -224,3 +224,19 @@ def test_enrich_resplit_apply_asks_before_writing(tmp_path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert '"It total" → drop' in out and "Nothing written." in out
     assert (cfg.vault_path / "Patterns" / "Missing words.md").exists()
+
+
+def test_main_prints_non_ascii_on_a_cp1252_stdout(tmp_path, monkeypatch):
+    import io
+    import json
+    import sys
+    paths, cfg = _setup(tmp_path)
+    _resplit_vault(cfg)
+    reply = json.dumps({"notes": [{"pattern": "Missing words", "action": "split",
+                                   "examples": [{"before": "It total", "target": None}]}]})
+    monkeypatch.setattr(cli, "make_runner", lambda config, p: (lambda prompt: reply))
+    raw = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(raw, encoding="cp1252"))
+    assert cli.main(["enrich", "--resplit"], env={"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}) == 0
+    sys.stdout.flush()
+    assert "Missing words → split" in raw.getvalue().decode("utf-8")

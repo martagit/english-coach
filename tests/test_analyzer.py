@@ -435,3 +435,10 @@ def test_resplit_patterns_retries_once_and_empty_input():
     assert resplit_patterns([{"pattern": "A", "rule": "", "examples": []}], runner=runner) == {}
     assert len(calls) == 2 and calls[1].endswith("Return ONLY the JSON object. No other text.")
     assert resplit_patterns([], runner=lambda p: 1 / 0) == {}
+
+
+def test_resplit_prompt_lets_examples_stay_in_their_note():
+    from english_coach.analyzer import build_pattern_resplit_prompt
+    text = build_pattern_resplit_prompt([{"pattern": "Articles", "rule": "", "examples": []}])
+    assert "the note's own name to keep it there" in text
+    assert "never a target" not in text

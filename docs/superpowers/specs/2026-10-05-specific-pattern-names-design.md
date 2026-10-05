@@ -23,7 +23,7 @@ The resulting note has a mushy Rule and examples that cannot be studied together
   patterns.
 - `english-coach enrich --resplit` audits existing pattern notes, previews a plan, and with
   `--apply` moves each example of a broad note into a specific note (keeping its original date
-  tag) or drops it, then deletes the broad note.
+  tag) or drops it, then moves the broad note to the vault's `.trash/` (or, if some examples stay, trims it after backing it up there). `--apply` asks for confirmation of the printed plan.
 - Links in old daily notes that pointed at a removed note are rewritten to the note each
   example moved to; daily notes stay clickable and correct.
 - Old vaults and old analyzer output keep working; nothing is written without `--apply`.
@@ -95,7 +95,7 @@ Output shape:
 `target: null` means drop. Parsing is defensive: unknown pattern names and `before` strings that
 do not match an example of that note are ignored; a split note whose examples are not all
 covered is left untouched (reported as "skipped: incomplete plan") so no example is ever lost.
-A `target` equal to the note's own name is treated as invalid for that note (skip the note).
+A `target` equal to the note's own name means the example stays. A note where every example stays is kept; a note that would be fully emptied cannot receive examples (the sending note is skipped).
 
 ### Plan preview
 
@@ -111,7 +111,7 @@ these changes."
    the pair with its **original date tag** via a small helper
    `append_pattern_examples_tagged(vault, pattern, rows: [(before, after, tag)])`
    (shares dedup/render logic with `append_pattern_examples`).
-2. Delete the broad note file.
+2. Re-link daily notes (below), then move each emptied note to `.trash/`; a note where some examples stay is backed up to `.trash/` first and trimmed to the staying examples.
 3. Rewrite daily-note links (below).
 4. Run `enrich_pattern_notes(vault, enricher)` so newly created notes get a Rule (it only
    touches un-enriched notes). Existing target notes keep their Rule.
@@ -141,7 +141,7 @@ rewritten; `cmd_enrich` prints it.
 - `test_vault_notes.py` (or new `test_vault_resplit.py`), with fake plans:
   - examples land in target notes with original date tags, deduped against existing examples;
   - new notes are created and passed to the enricher; existing notes keep their Rule;
-  - the broad note is deleted; kept notes are untouched;
+  - the broad note is moved to `.trash/`; kept notes are untouched;
   - incomplete plan → note left untouched and reported;
   - daily notes: recurring rows re-linked per example, dropped/unmatched → plain text, focus
     line → majority target, unrelated content and frontmatter unchanged;

@@ -55,19 +55,19 @@ def test_plan_skips_incomplete_or_invalid_plans(tmp_path):
     plan = resplit.plan_resplit(v, lambda items: incomplete)
     assert plan.splits == [] and plan.skipped == [("Missing words", "incomplete plan")]
 
-    for bad in ("Missing words", "", 7):
+    for bad in ("", 7):
         raw = {"Missing words": {**GOOD["Missing words"], "It total, 85k records": bad}}
         plan = resplit.plan_resplit(v, lambda items: raw)
         assert plan.splits == [] and plan.skipped[0][0] == "Missing words"
 
 
-def test_plan_rejects_target_that_is_itself_being_split(tmp_path):
+def test_plan_rejects_target_that_is_being_emptied(tmp_path):
     v = _vault(tmp_path)
     raw = {**GOOD, "Articles": {"use mcp": "Determiners"}}
     raw["Missing words"] = {**GOOD["Missing words"], "get familiar with a new spec": "Articles"}
     plan = resplit.plan_resplit(v, lambda items: raw)
     assert [s.pattern for s in plan.splits] == ["Articles"]
-    assert plan.skipped == [("Missing words", "target is itself being split: Articles")]
+    assert plan.skipped == [("Missing words", "target is being emptied: Articles")]
 
 
 def test_plan_unknown_and_omitted_notes(tmp_path):
@@ -278,3 +278,50 @@ def test_apply_relinks_daily_notes_of_a_renamed_note(tmp_path):
     body = read_note(daily)[1]
     assert "[[Omissions]]" not in body.split("## Recurring patterns")[1]
     assert "| [[Articles]] | get familiar with a new spec |" in body
+
+
+def _vault_with_misfit(tmp_path):
+    v = _vault(tmp_path)
+    append_pattern_examples_tagged(v, "Articles", [("a misfit here", "a misfit fixed", "09-02")])
+    return v
+
+
+PARTIAL = {"Articles": {"use mcp": "Articles", "a misfit here": "Verb + preposition"},
+           "Missing words": {**GOOD["Missing words"]}}
+
+
+def test_plan_lets_examples_stay_and_targets_partly_split_note(tmp_path):
+    v = _vault_with_misfit(tmp_path)
+    plan = resplit.plan_resplit(v, lambda items: PARTIAL)
+    assert plan.skipped == []
+    art = next(s for s in plan.splits if s.pattern == "Articles")
+    assert [m.target for m in art.moves] == ["Articles", "Verb + preposition"]
+    text = resplit.format_plan(plan, v)
+    assert "Articles → split (1 stays)" in text
+    assert '"use mcp"' not in text                         # staying examples aren't listed
+    assert '"get familiar with a new spec" → Articles (existing)' in text
+
+
+def test_plan_where_every_example_stays_is_kept(tmp_path):
+    v = _vault(tmp_path)
+    plan = resplit.plan_resplit(v, lambda items: {"Articles": {"use mcp": "articles"}})
+    assert plan.splits == [] and "Articles" in plan.kept
+
+
+def test_apply_trims_partly_split_note_and_backs_it_up(tmp_path):
+    v = _vault_with_misfit(tmp_path)
+    original = (v / "Patterns" / "Articles.md").read_text(encoding="utf-8")
+    daily = _daily(v, DAILY.replace(
+        "| [[Articles]] | use mcp | use the MCP |",
+        "| [[Articles]] | use mcp | use the MCP |\n| [[Articles]] | a misfit here | a misfit fixed |"))
+    res = resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: PARTIAL), lambda items: {})
+    fm, art = read_note(v / "Patterns" / "Articles.md")
+    assert fm["pattern"] == "Articles" and "**Rule:** use the" in art
+    assert "use mcp" in art and "get familiar with a new spec" in art and "a misfit" not in art
+    assert (v / ".trash" / "Articles.md").read_text(encoding="utf-8") == original
+    assert not (v / "Patterns" / "Missing words.md").exists()
+    assert "a misfit here" in read_note(v / "Patterns" / "Verb + preposition.md")[1]
+    body = read_note(daily)[1]
+    assert "| [[Articles]] | use mcp |" in body
+    assert "| [[Verb + preposition]] | a misfit here |" in body
+    assert (res.notes_split, res.moved, res.dropped) == (2, 3, 1)
