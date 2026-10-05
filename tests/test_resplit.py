@@ -109,3 +109,90 @@ def test_format_plan_truncates_long_before_and_lists_skipped(tmp_path):
     text = resplit.format_plan(plan, tmp_path)
     assert '"' + "x" * 57 + '…" → drop' in text
     assert "Skipped: Other (incomplete plan)" in text
+
+
+from english_coach.frontmatter import read_note
+
+DAILY = """## Wins
+- [[park it]] — "see [[Missing words]] later"
+
+## Focus pattern
+**[[Missing words]]** — add the small words
+
+| before | after |
+| --- | --- |
+| change anything the framework | change anything in the framework |
+| get familiar with a new spec | get familiar with the new spec |
+| Did I change anything the code | Did I change anything in the code |
+
+## Recurring patterns
+| pattern | before | after |
+| --- | --- | --- |
+| [[Articles]] | use mcp | use the MCP |
+| [[Missing words]] | get familiar with a new spec | get familiar with the new spec |
+| [[Missing words]] | It total, 85k records | In total, 85k records |
+| [[Missing words]] | something never planned | x |
+
+## Snapshot
+- ok"""
+
+MOVES = {"Missing words": {"change anything the framework": "Verb + preposition",
+                           "Did I change anything the code": "Verb + preposition",
+                           "get familiar with a new spec": "Articles",
+                           "It total, 85k records": None}}
+
+
+def _daily(tmp_path, body=DAILY, name="2026-09-24.md"):
+    path = tmp_path / "Daily" / name
+    write_note(path, {"from": "2026-09-24", "to": "2026-09-24", "prompt_count": 3}, body)
+    return path
+
+
+def test_rewrite_relinks_rows_and_focus_line(tmp_path):
+    path = _daily(tmp_path)
+    assert resplit.rewrite_daily_links(tmp_path, MOVES) == 1
+    fm, body = read_note(path)
+    assert fm == {"from": "2026-09-24", "to": "2026-09-24", "prompt_count": 3}
+    assert "**[[Verb + preposition]]** — add the small words" in body   # 2 of 3 focus rows
+    assert "| [[Articles]] | get familiar with a new spec |" in body
+    assert "| Missing words | It total, 85k records |" in body           # dropped → plain
+    assert "| Missing words | something never planned |" in body        # unmatched → plain
+    assert "| [[Articles]] | use mcp | use the MCP |" in body
+
+
+def test_rewrite_leaves_other_sections_alone(tmp_path):
+    body = DAILY.replace("**[[Missing words]]**", "**[[Articles]]**")
+    path = _daily(tmp_path, body)
+    resplit.rewrite_daily_links(tmp_path, MOVES)
+    _, out = read_note(path)
+    assert '- [[park it]] — "see [[Missing words]] later"' in out
+    assert "**[[Articles]]** — add the small words" in out
+
+
+def test_rewrite_focus_tie_picks_first_in_table_and_none_maps_to_plain(tmp_path):
+    tie = {"Missing words": {"change anything the framework": "Verb + preposition",
+                             "get familiar with a new spec": "Articles",
+                             "Did I change anything the code": None}}
+    path = _daily(tmp_path)
+    resplit.rewrite_daily_links(tmp_path, tie)
+    assert "**[[Verb + preposition]]**" in read_note(path)[1]
+
+    path2 = _daily(tmp_path, name="2026-09-25.md")
+    resplit.rewrite_daily_links(tmp_path, {"Missing words": {}})
+    assert "**Missing words** — add the small words" in read_note(path2)[1]
+
+
+def test_rewrite_matches_escaped_pipe_cell(tmp_path):
+    body = ("## Recurring patterns\n| pattern | before | after |\n| --- | --- | --- |\n"
+            "| [[Missing words]] | a \| b  c | a or b c |")
+    path = _daily(tmp_path, body)
+    resplit.rewrite_daily_links(tmp_path, {"Missing words": {"a | b c": "Linking clauses"}})
+    assert "| [[Linking clauses]] | a \| b  c |" in read_note(path)[1]
+
+
+def test_rewrite_untouched_notes_are_not_written(tmp_path):
+    path = _daily(tmp_path, "## Snapshot\n- ok")
+    before = path.read_text(encoding="utf-8")
+    assert resplit.rewrite_daily_links(tmp_path, MOVES) == 0
+    assert path.read_text(encoding="utf-8") == before
+    assert resplit.rewrite_daily_links(tmp_path / "nowhere", MOVES) == 0
