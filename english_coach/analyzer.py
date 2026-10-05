@@ -459,6 +459,54 @@ def enrich_patterns(items: list[dict], runner=None, profile: Profile = Profile()
     return out
 
 
+def build_pattern_resplit_prompt(items: list[dict], profile: Profile = Profile()) -> str:
+    """items: [{"pattern": str, "rule": str, "examples": [(before, after), ...]}]."""
+    blocks = []
+    for it in items:
+        exs = "\n".join(f'    - "{b}"  ->  "{a}"' for b, a in it.get("examples", [])) or "    (none)"
+        blocks.append(f"- {it['pattern']}\n  rule: {it.get('rule', '') or '(none)'}\n  examples:\n{exs}")
+    listing = "\n".join(blocks)
+    return (
+        f"{PATTERN_PREAMBLE} to {profile.learner()} and keep their mistake notes tidy.\n\n"
+        f"Audit the grammar pattern notes below. {PATTERN_NAMING_RULE}\n"
+        "For EACH note answer \"keep\" if all its examples share one rule. Otherwise answer "
+        "\"split\" and give EVERY example a target: the name of another note below when the "
+        "example truly fits its rule, a new short 2-4 word rule name, or null to drop it "
+        "(typos and one-off vocabulary slips are not patterns). A split note's own name is "
+        "never a target.\n\n"
+        f"Notes:\n{listing}\n\n"
+        "Output ONLY a single JSON object of exactly this shape — no prose, no markdown fences:\n"
+        '{"notes":[{"pattern":"<note name verbatim>","action":"keep"},'
+        '{"pattern":"<note name verbatim>","action":"split","examples":'
+        '[{"before":"<before text verbatim>","target":"<pattern name or null>"}]}]}\n'
+        "Include EVERY note; copy names and 'before' texts verbatim so they can be matched back."
+    )
+
+
+def resplit_patterns(items: list[dict], runner=None, profile: Profile = Profile()) -> dict:
+    """Return {pattern: {before: target-or-None}} for the notes the model wants split.
+    One batched call; targets are passed through unvalidated."""
+    if not items:
+        return {}
+    runner = runner or (lambda p: run_claude_cli(p))
+    prompt = build_pattern_resplit_prompt(items, profile)
+    text = runner(prompt)
+    try:
+        payload = extract_json_object(text)
+    except (ValueError, json.JSONDecodeError):
+        text = runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
+        payload = extract_json_object(text)
+    out: dict = {}
+    for n in payload.get("notes") or []:
+        if not (isinstance(n, dict) and n.get("action") == "split"
+                and isinstance(n.get("pattern"), str)):
+            continue
+        out[n["pattern"]] = {" ".join(ex["before"].split()): ex.get("target")
+                             for ex in n.get("examples") or []
+                             if isinstance(ex, dict) and isinstance(ex.get("before"), str)}
+    return out
+
+
 def construction_enrich_system(profile: Profile) -> str:
     return (
         f"{CONSTRUCTION_ENRICH_PREAMBLE} to {profile.learner()}. Each 'rule' is 1-2 plain-English "

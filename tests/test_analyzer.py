@@ -388,3 +388,50 @@ def test_prompt_names_patterns_by_rule_not_symptom():
         assert f'"{bad}"' in PATTERN_NAMING_RULE
     assert "only when the example truly fits that pattern's rule" in text
     assert "Typos and one-off vocabulary slips are not patterns" in text
+
+
+def test_resplit_prompt_lists_every_note_and_example():
+    from english_coach.analyzer import build_pattern_resplit_prompt, PATTERN_NAMING_RULE
+    from english_coach.coach_prompts import COACH_PROMPT_PREFIXES
+    from english_coach.profile import Profile
+    items = [{"pattern": "Missing words", "rule": "add small words",
+              "examples": [(f"before {i}", f"after {i}") for i in range(12)]},
+             {"pattern": "Articles", "rule": "", "examples": []}]
+    text = build_pattern_resplit_prompt(items, profile=Profile("German", "QA engineer"))
+    assert text.startswith(COACH_PROMPT_PREFIXES)
+    assert "a German-native QA engineer" in text
+    assert PATTERN_NAMING_RULE in text
+    assert "- Missing words" in text and "- Articles" in text
+    assert '"before 11"' in text  # no cap: every example needs a target
+    assert "add small words" in text
+
+
+def test_resplit_patterns_parses_split_notes_only():
+    from english_coach.analyzer import resplit_patterns
+    reply = json.dumps({"notes": [
+        {"pattern": "Articles", "action": "keep"},
+        {"pattern": "Missing words", "action": "split", "examples": [
+            {"before": "change  anything the framework", "target": "Verb + preposition"},
+            {"before": "It total", "target": None},
+            {"target": "x"},          # no before → ignored
+            "junk",                   # not a dict → ignored
+        ]},
+        {"action": "split"},          # no pattern → ignored
+    ]})
+    out = resplit_patterns([{"pattern": "Missing words", "rule": "", "examples": []}],
+                           runner=lambda p: reply)
+    assert out == {"Missing words": {"change anything the framework": "Verb + preposition",
+                                     "It total": None}}
+
+
+def test_resplit_patterns_retries_once_and_empty_input():
+    from english_coach.analyzer import resplit_patterns
+    calls = []
+
+    def runner(p):
+        calls.append(p)
+        return "sorry" if len(calls) == 1 else '{"notes": []}'
+
+    assert resplit_patterns([{"pattern": "A", "rule": "", "examples": []}], runner=runner) == {}
+    assert len(calls) == 2 and calls[1].endswith("Return ONLY the JSON object. No other text.")
+    assert resplit_patterns([], runner=lambda p: 1 / 0) == {}
