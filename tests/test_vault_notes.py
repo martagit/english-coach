@@ -86,7 +86,8 @@ def test_render_daily_body_escapes_pipes_in_tables():
                  [BeforeAfter("a || b", "the a | b")]),
                  recurring=[], new_phrases=[], reused_phrases=[], snapshot=["s"])
     body = render_daily_body(a)
-    assert "a \\|\\| b" in body
+    row = next(line for line in body.splitlines() if "the" in line)
+    assert row.count("|") - row.count("\\|") == 2  # only the two cell borders are unescaped
 
 
 def test_read_phrase_entries_detects_quote_and_unenriched(tmp_path):
