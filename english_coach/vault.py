@@ -151,8 +151,10 @@ _EX_RE = re.compile(r'^- ✗ (?P<before>.+?) → ✓ (?P<after>.+?)(?:\s+·\s+_(
 
 
 def _short_date(label: str) -> str:
-    m = re.match(r'^(\d{4})-(\d{2}-\d{2})$', label or "")
-    return m.group(2) if m else (label or "")
+    m = re.match(r'^\d{4}-(\d{2}-\d{2})(?:_to_(\d{2}-\d{2}))?$', label or "")
+    if not m:
+        return label or ""
+    return f"{m.group(1)}–{m.group(2)}" if m.group(2) else m.group(1)
 
 
 def _extract_rule(body: str) -> str:

@@ -203,3 +203,11 @@ def test_append_pattern_examples_tagged_keeps_given_tags_and_dedupes(tmp_path):
     assert "**Rule:** use the" in body
     assert body.count("run mcp server") == 1 and "_07-05_" in body
     assert "✓ check the occurrence's status  · _2026-09-16_to_09-22_" in body
+
+
+def test_short_date_shortens_days_and_ranges():
+    from english_coach.vault import _short_date
+    assert _short_date("2026-09-23") == "09-23"
+    assert _short_date("2026-09-16_to_09-22") == "09-16–09-22"
+    assert _short_date("09-16–09-22") == "09-16–09-22"
+    assert _short_date("") == ""
