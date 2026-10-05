@@ -11,11 +11,11 @@ from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+from english_coach.fix_markup import parse_fix, text_key
 from english_coach.frontmatter import read_note, write_note
 from english_coach.vault import (
     _extract_rule, _parse_pattern_examples, _render_pattern_note, append_pattern_examples_tagged,
-    enrich_pattern_notes,
-    ensure_pattern_note, note_name,
+    enrich_pattern_notes, ensure_pattern_note, note_name, reformat_daily_body,
 )
 
 
@@ -52,7 +52,8 @@ class ResplitResult:
 
 
 def _norm(text: str) -> str:
-    return " ".join(str(text).replace("\\|", "|").split())
+    """Matching key: whitespace- and escape-insensitive (see fix_markup.text_key)."""
+    return text_key(str(text).replace("\\|", "|"))
 
 
 def _key(name: str) -> str:
@@ -154,7 +155,9 @@ _CELL_SEP = re.compile(r'(?<!\\)\|')
 
 
 def _first_cell(row_rest: str) -> str:
-    return _norm(_CELL_SEP.split(row_rest)[0])
+    """The `before` of a converted daily row's fix cell, as a matching key."""
+    cell = _CELL_SEP.split(row_rest)[0].strip().replace("\\|", "|")
+    return _norm(parse_fix(cell)[0])
 
 
 def _relink(line: str, name: str, target: str | None) -> str:
@@ -162,7 +165,7 @@ def _relink(line: str, name: str, target: str | None) -> str:
 
 
 def _rewrite_body(body: str, moves: dict) -> str:
-    lines = body.split("\n")
+    lines = reformat_daily_body(body).split("\n")
     section = ""
     focus_at, focus_befores = None, []
     for i, line in enumerate(lines):
@@ -173,9 +176,8 @@ def _rewrite_body(body: str, moves: dict) -> str:
             if m and m.group("name") in moves:
                 focus_at = i
             elif focus_at is not None and line.startswith("| "):
-                cell = _first_cell(line[1:])
-                if cell not in ("before", "---"):
-                    focus_befores.append(cell)
+                if line[1:].split("|")[0].strip() not in ("fix", "---"):
+                    focus_befores.append(_first_cell(line[1:]))
         elif section == "Recurring patterns":
             m = _ROW_RE.match(line)
             if m and m.group("name") in moves:
@@ -195,6 +197,7 @@ def rewrite_daily_links(vault: Path, moves: dict) -> int:
     folder = Path(vault) / "Daily"
     if not moves or not folder.is_dir():
         return 0
+    moves = {name: {_norm(k): v for k, v in m.items()} for name, m in moves.items()}
     count = 0
     for path in sorted(folder.glob("*.md")):
         fm, body = read_note(path)
@@ -212,6 +215,7 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
     if not plan.splits:
         return res
     folder = Path(vault) / "Patterns"
+    changed: set[Path] = set()  # existing notes whose examples change → need a new Rule
     for s in plan.splits:  # back up notes that will be trimmed, before anything is written
         if any(_stays(m.target, s.pattern) for m in s.moves):
             shutil.copy2(s.path, _trash_path(vault, s.path))
@@ -223,7 +227,10 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
             if m.target is None:
                 res.dropped += 1
                 continue
-            if not (folder / f"{note_name(m.target)}.md").exists():
+            target_path = folder / f"{note_name(m.target)}.md"
+            if target_path.exists():
+                changed.add(target_path)
+            else:
                 res.created += 1
             ensure_pattern_note(vault, m.target)
             rows.setdefault(m.target, []).append((m.before, m.after, m.tag))
@@ -242,9 +249,12 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
     for s in plan.splits:
         if any(_stays(m.target, s.pattern) for m in s.moves):
             _trim(vault, s)
+            changed.add(s.path)
         else:
             s.path.rename(_trash_path(vault, s.path))
         res.notes_split += 1
+    for path in changed:
+        _mark_for_new_rule(path)
     res.enriched = enrich_pattern_notes(vault, enricher)
     return res
 
@@ -252,9 +262,18 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
 def _trim(vault: Path, s: NoteSplit) -> None:
     """Remove the examples that moved away (the original was backed up to `.trash/`)."""
     fm, body = read_note(s.path)
-    gone = {(m.before, m.after) for m in s.moves if not _stays(m.target, s.pattern)}
-    pairs = [p for p in _parse_pattern_examples(body) if (p[0], p[1]) not in gone]
+    gone = {(_norm(m.before), _norm(m.after)) for m in s.moves if not _stays(m.target, s.pattern)}
+    pairs = [p for p in _parse_pattern_examples(body) if (_norm(p[0]), _norm(p[1])) not in gone]
     write_note(s.path, fm, _render_pattern_note(s.pattern, _extract_rule(body), pairs))
+
+
+def _mark_for_new_rule(path: Path) -> None:
+    """A note whose examples changed gets its Rule rewritten by the next enrichment."""
+    if not path.exists():
+        return
+    fm, body = read_note(path)
+    if fm.get("enriched"):
+        write_note(path, {**fm, "enriched": False}, body)
 
 
 def _trash_path(vault: Path, path: Path) -> Path:

@@ -1,6 +1,7 @@
 from english_coach import resplit
 from english_coach.frontmatter import write_note
 from english_coach.vault import append_pattern_examples_tagged, ensure_pattern_note
+from english_coach.fix_markup import render_fix
 
 MW = [("change anything the framework", "change anything in the framework", "09-16"),
       ("get familiar with a new spec", "get familiar with the new spec", "09-24"),
@@ -154,10 +155,10 @@ def test_rewrite_relinks_rows_and_focus_line(tmp_path):
     fm, body = read_note(path)
     assert fm == {"from": "2026-09-24", "to": "2026-09-24", "prompt_count": 3}
     assert "**[[Verb + preposition]]** — add the small words" in body   # 2 of 3 focus rows
-    assert "| [[Articles]] | get familiar with a new spec |" in body
-    assert "| Missing words | It total, 85k records |" in body           # dropped → plain
-    assert "| Missing words | something never planned |" in body        # unmatched → plain
-    assert "| [[Articles]] | use mcp | use the MCP |" in body
+    assert "| [[Articles]] | get familiar with" in body
+    assert f"| Missing words | {render_fix('It total, 85k records', 'In total, 85k records')} |" in body
+    assert f"| Missing words | {render_fix('something never planned', 'x')} |" in body
+    assert f"| [[Articles]] | {render_fix('use mcp', 'use the MCP')} |" in body
 
 
 def test_rewrite_leaves_other_sections_alone(tmp_path):
@@ -187,7 +188,8 @@ def test_rewrite_matches_escaped_pipe_cell(tmp_path):
             "| [[Missing words]] | a \| b  c | a or b c |")
     path = _daily(tmp_path, body)
     resplit.rewrite_daily_links(tmp_path, {"Missing words": {"a | b c": "Linking clauses"}})
-    assert "| [[Linking clauses]] | a \| b  c |" in read_note(path)[1]
+    out = read_note(path)[1]
+    assert "| [[Linking clauses]] | " in out and "[[Missing words]]" not in out
 
 
 def test_rewrite_untouched_notes_are_not_written(tmp_path):
@@ -214,14 +216,14 @@ def test_apply_moves_examples_deletes_note_relinks_and_enriches(tmp_path):
     res = resplit.apply_resplit(v, plan, enricher)
     assert (res.notes_split, res.moved, res.dropped, res.created, res.dailies, res.enriched) == (1, 2, 1, 1, 1, 1)
     assert not (v / "Patterns" / "Missing words.md").exists()
-    assert asked == ["Verb + preposition"]                      # Articles already enriched
+    assert asked == ["Articles", "Verb + preposition"]          # Articles gained an example
     _, vp = read_note(v / "Patterns" / "Verb + preposition.md")
     assert "**Rule:** Use in/into for containers." in vp
-    assert "✓ change anything in the framework  · _09-16_" in vp
+    assert f"- {render_fix('change anything the framework', 'change anything in the framework')}  · _09-16_" in vp
     _, art = read_note(v / "Patterns" / "Articles.md")
     assert "**Rule:** use the" in art and "· _09-24_" in art and "use mcp" in art
     assert "It total" not in art and "It total" not in vp
-    assert "| [[Articles]] | get familiar with a new spec |" in read_note(daily)[1]
+    assert "| [[Articles]] | get familiar with" in read_note(daily)[1]
 
 
 def test_apply_leaves_skipped_and_kept_notes_alone(tmp_path):
@@ -277,7 +279,7 @@ def test_apply_relinks_daily_notes_of_a_renamed_note(tmp_path):
     resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: GOOD), lambda items: {})
     body = read_note(daily)[1]
     assert "[[Omissions]]" not in body.split("## Recurring patterns")[1]
-    assert "| [[Articles]] | get familiar with a new spec |" in body
+    assert "| [[Articles]] | get familiar with" in body
 
 
 def _vault_with_misfit(tmp_path):
@@ -317,13 +319,13 @@ def test_apply_trims_partly_split_note_and_backs_it_up(tmp_path):
     res = resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: PARTIAL), lambda items: {})
     fm, art = read_note(v / "Patterns" / "Articles.md")
     assert fm["pattern"] == "Articles" and "**Rule:** use the" in art
-    assert "use mcp" in art and "get familiar with a new spec" in art and "a misfit" not in art
+    assert "use mcp" in art and "get familiar with" in art and "a misfit" not in art
     assert (v / ".trash" / "Articles.md").read_text(encoding="utf-8") == original
     assert not (v / "Patterns" / "Missing words.md").exists()
-    assert "a misfit here" in read_note(v / "Patterns" / "Verb + preposition.md")[1]
+    assert "a misfit ~~here~~ **fixed**" in read_note(v / "Patterns" / "Verb + preposition.md")[1]
     body = read_note(daily)[1]
-    assert "| [[Articles]] | use mcp |" in body
-    assert "| [[Verb + preposition]] | a misfit here |" in body
+    assert "| [[Articles]] | ~~use mcp~~" in body
+    assert "| [[Verb + preposition]] | a misfit ~~here~~ **fixed** |" in body
     assert (res.notes_split, res.moved, res.dropped) == (2, 3, 1)
 
 
@@ -332,4 +334,20 @@ def test_rewrite_matches_column_aligned_table_rows(tmp_path):
             "| [[Missing words]]      | do we seed anything directly to DB?    | into the DB |")
     path = _daily(tmp_path, body)
     resplit.rewrite_daily_links(tmp_path, {"Missing words": {"do we seed anything directly to DB?": "Prepositions"}})
-    assert "| [[Prepositions]]      | do we seed" in read_note(path)[1]
+    assert "| [[Prepositions]] | " in read_note(path)[1]
+
+
+def test_apply_marks_changed_notes_for_a_new_rule(tmp_path):
+    v = _vault_with_misfit(tmp_path)
+    for name in ("Articles", "Missing words"):
+        p = v / "Patterns" / f"{name}.md"
+        fm, body = read_note(p)
+        write_note(p, {**fm, "enriched": True}, body)
+    ensure_pattern_note(v, "Linking clauses", "join clauses")
+    p = v / "Patterns" / "Linking clauses.md"
+    write_note(p, {**read_note(p)[0], "enriched": True}, read_note(p)[1])
+    asked = []
+    resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: PARTIAL),
+                          lambda items: asked.extend(i["pattern"] for i in items) or {})
+    assert asked == ["Articles", "Verb + preposition"]   # trimmed + received; new note
+    assert read_note(v / "Patterns" / "Linking clauses.md")[0]["enriched"] is True  # untouched
