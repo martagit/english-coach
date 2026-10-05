@@ -169,3 +169,42 @@ def test_enrich_constructions_flag_only_enriches_constructions(tmp_path, monkeyp
     seen.clear()
     assert cli.main(["enrich"], env={"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}) == 0
     assert seen == ["phrases", "patterns", "constructions"]
+
+
+def _resplit_vault(cfg):
+    from english_coach.vault import append_pattern_examples_tagged, ensure_pattern_note
+    ensure_pattern_note(cfg.vault_path, "Missing words", "add words")
+    append_pattern_examples_tagged(cfg.vault_path, "Missing words", [("It total", "In total", "09-23")])
+
+
+def test_enrich_resplit_previews_without_writing(tmp_path, monkeypatch, capsys):
+    import json
+    paths, cfg = _setup(tmp_path)
+    _resplit_vault(cfg)
+    reply = json.dumps({"notes": [{"pattern": "Missing words", "action": "split",
+                                   "examples": [{"before": "It total", "target": None}]}]})
+    monkeypatch.setattr(cli, "make_runner", lambda config, p: (lambda prompt: reply))
+    env = {"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}
+    assert cli.main(["enrich", "--resplit"], env=env) == 0
+    out = capsys.readouterr().out
+    assert '"It total" → drop' in out and "--apply" in out
+    assert (cfg.vault_path / "Patterns" / "Missing words.md").exists()
+
+    assert cli.main(["enrich", "--resplit", "--apply"], env=env) == 0
+    assert "Split 1 note(s): moved 0, dropped 1" in capsys.readouterr().out
+    assert not (cfg.vault_path / "Patterns" / "Missing words.md").exists()
+
+
+def test_enrich_resplit_runs_alone_and_apply_needs_resplit(tmp_path, monkeypatch, capsys):
+    paths, cfg = _setup(tmp_path)
+    seen = []
+    monkeypatch.setattr(cli.vault, "enrich_phrase_notes", lambda *a, **k: seen.append("phrases") or 0)
+    monkeypatch.setattr(cli.vault, "enrich_pattern_notes", lambda *a, **k: seen.append("patterns") or 0)
+    monkeypatch.setattr(cli.constructions, "enrich_construction_notes",
+                        lambda *a, **k: seen.append("constructions") or 0)
+    monkeypatch.setattr(cli, "make_runner", lambda config, p: (lambda prompt: '{"notes": []}'))
+    env = {"ENGLISH_COACH_CONFIG_DIR": str(paths.config_dir)}
+    assert cli.main(["enrich", "--resplit"], env=env) == 0
+    assert seen == []
+    assert cli.main(["enrich", "--apply"], env=env) == 1
+    assert "--apply only works with --resplit" in capsys.readouterr().err

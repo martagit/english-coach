@@ -7,10 +7,10 @@ from dataclasses import replace
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from english_coach import coach, constructions, scheduler, vault
+from english_coach import coach, constructions, resplit, scheduler, vault
 from english_coach.analyzer import (
     ClaudeAnalyzer, ClaudeCliAnalyzer, enrich_constructions, enrich_patterns, enrich_phrases,
-    run_claude_cli,
+    resplit_patterns, run_claude_cli,
 )
 from english_coach.config import AppPaths, Config, ConfigError, load_config, save_config
 from english_coach.curator import CONSTRUCTIONS, curate
@@ -101,12 +101,34 @@ def cmd_run(args, paths: AppPaths, env: dict) -> int:
     return code
 
 
+def _cmd_resplit(args, config: Config, runner) -> int:
+    prof = config.profile
+    plan = resplit.plan_resplit(
+        config.vault_path, lambda items: resplit_patterns(items, runner=runner, profile=prof))
+    print(resplit.format_plan(plan, config.vault_path))
+    if not args.apply:
+        if plan.splits:
+            print("Run again with --apply to write these changes.")
+        return 0
+    r = resplit.apply_resplit(
+        config.vault_path, plan, lambda items: enrich_patterns(items, runner=runner, profile=prof))
+    print(f"Split {r.notes_split} note(s): moved {r.moved}, dropped {r.dropped}, "
+          f"created {r.created} note(s), re-linked {r.dailies} daily note(s), "
+          f"wrote {r.enriched} rule(s).")
+    return 0
+
+
 def cmd_enrich(args, paths: AppPaths, env: dict) -> int:
     config = _load(paths, env, args)
+    if args.apply and not args.resplit:
+        print("Error: --apply only works with --resplit.", file=sys.stderr)
+        return 1
     runner = make_runner(config, paths)
     prof = config.profile
     picked = args.phrases or args.patterns or args.constructions
     try:
+        if args.resplit:
+            return _cmd_resplit(args, config, runner)
         if args.phrases or not picked:
             n = vault.enrich_phrase_notes(
                 config.vault_path, lambda items: enrich_phrases(items, runner=runner, profile=prof),
@@ -223,6 +245,9 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument("--patterns", action="store_true")
     enrich.add_argument("--constructions", action="store_true")
     enrich.add_argument("--force", action="store_true", help="Regenerate ALL notes.")
+    enrich.add_argument("--resplit", action="store_true",
+                        help="Split broad pattern notes into one-rule notes (preview only).")
+    enrich.add_argument("--apply", action="store_true", help="With --resplit: write the changes.")
     enrich.set_defaults(func=cmd_enrich)
 
     sch = sub.add_parser("schedule", help="Register (or update) the daily OS job.")

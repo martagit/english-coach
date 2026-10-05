@@ -77,6 +77,7 @@ subscription usage.
 | `english-coach init` | Interactive setup: prerequisites, vault, learner profile, backend, first backfill, schedule. |
 | `english-coach run` | The daily job: analyzes completed days since the last run. Flags: `--backfill-days`, `--from`/`--to`, `--include-today`, `--config-dir`, `--claude-config-dir`. |
 | `english-coach enrich` | Adds definitions/examples/rules to bare phrase, pattern and construction notes (`--phrases`, `--patterns`, `--constructions` to pick). |
+| `english-coach enrich --resplit` | Audits pattern notes and previews splitting broad ones (e.g. "Missing words") into one-rule notes; add `--apply` to move the examples, delete the broad note and re-link old daily notes. Safe to re-run any time. |
 | `english-coach doctor [--ping]` | Checks that everything is set up; `--ping` also makes a tiny test call to Claude (the only way it checks your login). |
 | `english-coach schedule [--time HH:MM]` | Registers (or updates) the daily OS job. |
 | `english-coach unschedule` | Removes the daily OS job. |
