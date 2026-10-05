@@ -52,11 +52,17 @@ keeps three active at a time, notes when you use one correctly, and shows a few 
 sentences rewritten with it under **Try this construction** in the daily note. A construction
 counts as adopted after you've used it on five different days.
 
+Each pattern note covers one rule ("Verb + preposition", "Articles"), and every correction
+shows as one sentence with the change marked: `paste ~~to~~ **into the** team channel`. Each
+run first brings older notes to this format. That's done in code, with no Claude call, and only
+the example lines and fix tables change.
+
 ## Privacy
 
 Transcripts are read and parsed entirely on your machine. The text of that day's prompts is
 sent to Claude for analysis — either through your Claude Code login (CLI backend) or your own
-API key (API backend). Nothing else leaves your machine.
+API key (API backend). Enrichment, curation and `enrich --resplit` also send excerpts already
+in your vault (your example sentences and the notes' Rules). Nothing else leaves your machine.
 
 ## Cost
 
@@ -76,7 +82,7 @@ subscription usage.
 |---|---|
 | `english-coach init` | Interactive setup: prerequisites, vault, learner profile, backend, first backfill, schedule. |
 | `english-coach run` | The daily job: analyzes completed days since the last run. Flags: `--backfill-days`, `--from`/`--to`, `--include-today`, `--config-dir`, `--claude-config-dir`. |
-| `english-coach enrich` | Adds definitions/examples/rules to bare phrase, pattern and construction notes (`--phrases`, `--patterns`, `--constructions` to pick). |
+| `english-coach enrich` | Adds definitions/examples/rules to bare phrase, pattern and construction notes (`--phrases`, `--patterns`, `--constructions` to pick; `--force` regenerates all of them, not just bare ones). |
 | `english-coach enrich --resplit` | Audits pattern notes and previews splitting broad ones (e.g. "Missing words") into one-rule notes; add `--apply` to confirm and move the examples, re-link old daily notes and move the broad note to the vault's `.trash/`. Safe to re-run any time. |
 | `english-coach doctor [--ping]` | Checks that everything is set up; `--ping` also makes a tiny test call to Claude (the only way it checks your login). |
 | `english-coach schedule [--time HH:MM]` | Registers (or updates) the daily OS job. |
@@ -176,6 +182,11 @@ uv tool install --reinstall git+https://github.com/martagit/english-coach
 Your config, vault and schedule are kept — the scheduled job keeps pointing at the same
 `english-coach` executable. New vault folders and notes (such as `Constructions/`) are created
 on the next run; run `english-coach doctor` to confirm everything is in place.
+
+After upgrading, the next run reformats older notes to the inline format. If an older pattern
+note collects unrelated mistakes (e.g. "Missing words"), run `english-coach enrich --resplit`
+to preview splitting it, and `english-coach enrich --patterns --force` to rewrite all pattern
+Rules.
 
 ## Uninstall
 
