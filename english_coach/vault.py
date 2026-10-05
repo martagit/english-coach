@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from english_coach.fix_markup import parse_fix, render_fix, text_key
 from english_coach.models import Analysis, Window
 from english_coach.window import note_basename
 from english_coach.frontmatter import write_note
@@ -148,6 +149,41 @@ def ensure_phrase_note(vault: Path, phrase: str, introduced: _date,
 _RULE_MARKER = "**Rule:**"
 _EX_HEADER = "## Before → after"
 _EX_RE = re.compile(r'^- ✗ (?P<before>.+?) → ✓ (?P<after>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
+_FIX_LINE_RE = re.compile(r'^- (?P<fix>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
+
+
+def parse_example_line(s: str) -> tuple[str, str, str] | None:
+    """(before, after, tag) from an example line in the old `✗ b → ✓ a` or the inline format."""
+    m = _EX_RE.match(s)
+    if m:
+        return m.group("before").strip(), m.group("after").strip(), m.group("tag") or ""
+    m = _FIX_LINE_RE.match(s)
+    if m and ("~~" in m.group("fix") or "**" in m.group("fix")):  # a learner's own bullet isn't one
+        b, a = parse_fix(m.group("fix"))
+        return b, a, m.group("tag") or ""
+    return None
+
+
+def example_line(before: str, after: str, tag: str) -> str:
+    t = _short_date(tag)
+    return f"- {render_fix(before, after)}" + (f"  · _{t}_" if t else "")
+
+
+def reformat_example_lines(body: str, header: str) -> str:
+    """Convert old `- ✗ b → ✓ a` lines under `header` (until the next heading) to the inline
+    format, in place. Every other line is left alone."""
+    lines = body.split("\n")
+    inside = False
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s == header:
+            inside = True
+        elif s.startswith("#"):
+            inside = False
+        elif inside and (m := _EX_RE.match(s)):
+            lines[i] = example_line(m.group("before").strip(), m.group("after").strip(),
+                                    m.group("tag") or "")
+    return "\n".join(lines)
 
 
 def _short_date(label: str) -> str:
@@ -171,39 +207,47 @@ def _extract_rule(body: str) -> str:
 
 
 def _parse_pattern_examples(body: str) -> list[tuple[str, str, str]]:
-    """Extract (before, after, date_tag) triples from a pattern note in either the
-    new list format or the old dated-table format. Deduplicated by (before, after)."""
+    """Extract (before, after, date_tag) triples from a pattern note: old `✗ b → ✓ a` lines,
+    inline-format lines under the examples header, or the old dated-table format.
+    Deduplicated by (before, after), ignoring whitespace."""
     pairs: list[tuple[str, str, str]] = []
     seen: set = set()
     cur_tag = ""
+    in_examples = False
+
+    def add(b, a, t):
+        k = (text_key(b), text_key(a))
+        if k not in seen:
+            seen.add(k)
+            pairs.append((b, a, t))
+
     for line in body.splitlines():
         s = line.strip()
-        m = _EX_RE.match(s)
-        if m:
-            b, a, t = m.group("before").strip(), m.group("after").strip(), (m.group("tag") or "")
-            if (b, a) not in seen:
-                seen.add((b, a))
-                pairs.append((b, a, t))
+        if s == _EX_HEADER:
+            in_examples = True
             continue
         if s.startswith("### "):
             cur_tag = _short_date(s[4:].strip())
             continue
+        if s.startswith("#"):
+            in_examples = False
+            continue
+        if _EX_RE.match(s) or (in_examples and s.startswith("- ")):
+            parsed = parse_example_line(s)
+            if parsed:
+                add(*parsed)
+            continue
         if s.startswith("|") and "---" not in s:
             cells = [c.strip() for c in s.strip("|").split("|")]
             if len(cells) == 2 and cells != ["before", "after"]:
-                b, a = cells
-                if (b, a) not in seen:
-                    seen.add((b, a))
-                    pairs.append((b, a, cur_tag))
+                add(cells[0], cells[1], cur_tag)
     return pairs
 
 
 def _render_pattern_note(pattern: str, rule: str, pairs: list[tuple[str, str, str]]) -> str:
     lines = [f"# {pattern}", "", f"{_RULE_MARKER} {rule}", "", _EX_HEADER]
     if pairs:
-        for b, a, t in pairs:
-            tag = f"  · _{t}_" if t else ""
-            lines.append(f"- ✗ {b} → ✓ {a}{tag}")
+        lines += [example_line(b, a, t) for b, a, t in pairs]
     else:
         lines.append("_(no examples yet)_")
     return "\n".join(lines)
@@ -232,12 +276,12 @@ def append_pattern_examples_tagged(vault: Path, pattern: str,
     path = Path(vault) / "Patterns" / f"{note_name(pattern)}.md"
     fm, body = read_note(path)
     pairs = _parse_pattern_examples(body)
-    seen = {(b, a) for b, a, _ in pairs}
+    seen = {(text_key(b), text_key(a)) for b, a, _ in pairs}
     changed = False
     for b, a, t in rows:
         b, a = b.strip(), a.strip()
-        if (b, a) not in seen:
-            seen.add((b, a))
+        if (text_key(b), text_key(a)) not in seen:
+            seen.add((text_key(b), text_key(a)))
             pairs.append((b, a, t))
             changed = True
     if changed:

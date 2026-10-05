@@ -6,6 +6,7 @@ from english_coach.vault import (
     read_phrase_entries, write_enriched_phrase_note, enrich_phrase_notes,
 )
 from english_coach.frontmatter import read_note
+from english_coach.fix_markup import render_fix
 from datetime import datetime, timezone
 
 
@@ -32,7 +33,7 @@ def test_ensure_pattern_note_and_append(tmp_path):
     ensure_pattern_note(tmp_path, "Articles", description="a/an/the")
     append_pattern_examples(tmp_path, "Articles", [("run mcp server", "run the MCP server")], "2026-07-05")
     _, body = read_note(tmp_path / "Patterns" / "Articles.md")
-    assert "✗ run mcp server → ✓ run the MCP server" in body
+    assert f"- {render_fix('run mcp server', 'run the MCP server')}  · _07-05_" in body
     assert "07-05" in body  # short date tag
 
 
@@ -68,7 +69,7 @@ def test_apply_analysis_notes_creates_new_phrase(tmp_path):
     apply_analysis_notes(tmp_path, a, introduced=date(2026, 7, 5), day_label="2026-07-05")
     assert (tmp_path / "Phrases" / "worth the churn.md").exists()
     _, articles = read_note(tmp_path / "Patterns" / "Articles.md")
-    assert "run the MCP server" in articles
+    assert render_fix("run mcp server", "run the MCP server") in articles
 
 
 def test_append_pattern_examples_idempotent(tmp_path):
@@ -76,7 +77,7 @@ def test_append_pattern_examples_idempotent(tmp_path):
     append_pattern_examples(tmp_path, "Articles", [("a", "the a")], "2026-07-05")
     append_pattern_examples(tmp_path, "Articles", [("a", "the a")], "2026-07-06")
     _, body = read_note(tmp_path / "Patterns" / "Articles.md")
-    assert body.count("✗ a → ✓ the a") == 1  # deduped by pair, even across days
+    assert body.count(render_fix("a", "the a")) == 1  # deduped by pair, even across days
 
 
 def test_render_daily_body_escapes_pipes_in_tables():
@@ -170,7 +171,7 @@ def test_enrich_pattern_notes_migrates_old_table_and_sets_rule(tmp_path):
     fm, body = read_note(tmp_path / "Patterns" / "Articles.md")
     assert fm["enriched"] is True
     assert "**Rule:** Use 'the' before a specific singular noun." in body
-    assert "✗ run mcp server → ✓ run the MCP server" in body  # migrated to study-card list
+    assert render_fix("run mcp server", "run the MCP server") in body  # migrated to the list
     assert "| before | after |" not in body  # old table gone
 
 
@@ -201,8 +202,9 @@ def test_append_pattern_examples_tagged_keeps_given_tags_and_dedupes(tmp_path):
     ])
     _, body = read_note(tmp_path / "Patterns" / "Articles.md")
     assert "**Rule:** use the" in body
-    assert body.count("run mcp server") == 1 and "_07-05_" in body
-    assert "✓ check the occurrence's status  · _2026-09-16_to_09-22_" in body
+    assert body.count(render_fix("run mcp server", "run the MCP server")) == 1 and "_07-05_" in body
+    fix = render_fix("check occurrence's status", "check the occurrence's status")
+    assert f"- {fix}  · _09-16–09-22_" in body
 
 
 def test_short_date_shortens_days_and_ranges():
@@ -211,3 +213,35 @@ def test_short_date_shortens_days_and_ranges():
     assert _short_date("2026-09-16_to_09-22") == "09-16–09-22"
     assert _short_date("09-16–09-22") == "09-16–09-22"
     assert _short_date("") == ""
+
+
+def test_parse_example_line_reads_both_formats():
+    from english_coach.vault import parse_example_line
+    assert parse_example_line("- ✗ a b → ✓ a the b  · _09-01_") == ("a b", "a the b", "09-01")
+    assert parse_example_line("- a **the** b  · _09-01_") == ("a b", "a the b", "09-01")
+    assert parse_example_line("- a **the** b") == ("a b", "a the b", "")
+    assert parse_example_line("plain text") is None
+    assert parse_example_line("- my own reminder: check every noun") is None  # no markup
+
+
+def test_append_dedupes_across_formats(tmp_path):
+    from english_coach.frontmatter import write_note
+    from english_coach.vault import append_pattern_examples_tagged
+    write_note(tmp_path / "Patterns" / "Articles.md", {"pattern": "Articles"},
+               "# Articles\n\n**Rule:** r\n\n## Before → after\n- ✗ use mcp → ✓ use the MCP  · _09-01_")
+    append_pattern_examples_tagged(tmp_path, "Articles", [("use  mcp", "use the MCP", "09-30")])
+    _, body = read_note(tmp_path / "Patterns" / "Articles.md")
+    assert body.count("use") == 2 and "09-30" not in body
+
+
+def test_reformat_example_lines_only_touches_old_lines_in_section():
+    from english_coach.vault import reformat_example_lines
+    body = ("# Articles\n\n**Rule:** r\n\n## Before → after\n"
+            "- ✗ use mcp server → ✓ use the mcp server  · _2026-09-16_to_09-22_\n"
+            "- my own reminder: check every noun\n\n"
+            "## My notes\n- ✗ keep → ✓ this one")
+    out = reformat_example_lines(body, "## Before → after")
+    assert "- use **the** mcp server  · _09-16–09-22_" in out
+    assert "- my own reminder: check every noun" in out
+    assert "## My notes\n- ✗ keep → ✓ this one" in out
+    assert reformat_example_lines(out, "## Before → after") == out
