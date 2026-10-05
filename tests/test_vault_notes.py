@@ -189,3 +189,17 @@ def test_enrich_pattern_notes_skips_already_enriched(tmp_path):
     n = enrich_pattern_notes(tmp_path, enricher)
     assert n == 0
     assert called["n"] == 0  # nothing to do → enricher not called
+
+
+def test_append_pattern_examples_tagged_keeps_given_tags_and_dedupes(tmp_path):
+    from english_coach.vault import append_pattern_examples_tagged
+    ensure_pattern_note(tmp_path, "Articles", description="use the")
+    append_pattern_examples(tmp_path, "Articles", [("run mcp server", "run the MCP server")], "2026-07-05")
+    append_pattern_examples_tagged(tmp_path, "Articles", [
+        ("run mcp server", "run the MCP server", "09-30"),   # duplicate → ignored
+        ("check occurrence's status", "check the occurrence's status", "2026-09-16_to_09-22"),
+    ])
+    _, body = read_note(tmp_path / "Patterns" / "Articles.md")
+    assert "**Rule:** use the" in body
+    assert body.count("run mcp server") == 1 and "_07-05_" in body
+    assert "✓ check the occurrence's status  · _2026-09-16_to_09-22_" in body

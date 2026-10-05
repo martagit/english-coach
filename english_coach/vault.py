@@ -218,19 +218,25 @@ def ensure_pattern_note(vault: Path, pattern: str, description: str = "") -> Pat
 
 def append_pattern_examples(vault: Path, pattern: str,
                             rows: list[tuple[str, str]], day_label: str) -> None:
+    tag = _short_date(day_label)
+    append_pattern_examples_tagged(vault, pattern, [(b, a, tag) for b, a in rows])
+
+
+def append_pattern_examples_tagged(vault: Path, pattern: str,
+                                   rows: list[tuple[str, str, str]]) -> None:
+    """Add (before, after, date_tag) examples, skipping ones the note already has."""
     if not rows:
         return
     path = Path(vault) / "Patterns" / f"{note_name(pattern)}.md"
     fm, body = read_note(path)
     pairs = _parse_pattern_examples(body)
     seen = {(b, a) for b, a, _ in pairs}
-    tag = _short_date(day_label)
     changed = False
-    for b, a in rows:
+    for b, a, t in rows:
         b, a = b.strip(), a.strip()
         if (b, a) not in seen:
             seen.add((b, a))
-            pairs.append((b, a, tag))
+            pairs.append((b, a, t))
             changed = True
     if changed:
         write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs))
