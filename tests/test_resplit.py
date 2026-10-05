@@ -241,3 +241,40 @@ def test_apply_with_empty_plan_writes_nothing(tmp_path):
     assert res == resplit.ResplitResult()
     assert (v / "Patterns" / "Missing words.md").exists()
     assert daily.read_text(encoding="utf-8") == snapshot
+
+
+def test_apply_moves_broad_note_to_obsidian_trash_with_its_content(tmp_path):
+    v = _vault(tmp_path)
+    original = (v / "Patterns" / "Missing words.md").read_text(encoding="utf-8") + "\nMy own notes\n"
+    (v / "Patterns" / "Missing words.md").write_text(original, encoding="utf-8")
+    (v / ".trash").mkdir()
+    (v / ".trash" / "Missing words.md").write_text("older", encoding="utf-8")
+    resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: GOOD), lambda items: {})
+    assert not (v / "Patterns" / "Missing words.md").exists()
+    assert (v / ".trash" / "Missing words.md").read_text(encoding="utf-8") == "older"
+    assert (v / ".trash" / "Missing words 1.md").read_text(encoding="utf-8") == original
+
+
+def test_apply_keeps_broad_note_when_daily_rewrite_fails(tmp_path, monkeypatch):
+    import pytest
+    v = _vault(tmp_path)
+    plan = resplit.plan_resplit(v, lambda items: GOOD)
+
+    def boom(*a, **k):
+        raise OSError("locked")
+
+    monkeypatch.setattr(resplit, "rewrite_daily_links", boom)
+    with pytest.raises(OSError):
+        resplit.apply_resplit(v, plan, lambda items: {})
+    assert (v / "Patterns" / "Missing words.md").exists()      # still there: re-run can finish
+    assert (v / "Patterns" / "Verb + preposition.md").exists()  # targets written first
+
+
+def test_apply_relinks_daily_notes_of_a_renamed_note(tmp_path):
+    v = _vault(tmp_path)
+    (v / "Patterns" / "Missing words.md").rename(v / "Patterns" / "Omissions.md")
+    daily = _daily(v, DAILY.replace("[[Missing words]]", "[[Omissions]]"))
+    resplit.apply_resplit(v, resplit.plan_resplit(v, lambda items: GOOD), lambda items: {})
+    body = read_note(daily)[1]
+    assert "[[Omissions]]" not in body.split("## Recurring patterns")[1]
+    assert "| [[Articles]] | get familiar with a new spec |" in body

@@ -1,7 +1,7 @@
 """Split broad pattern notes ("Missing words") into one-rule notes.
 
 plan_resplit asks the model to audit every pattern note and validates the answer;
-apply_resplit moves the examples, deletes the broad notes and re-links old daily notes.
+apply_resplit moves the examples, re-links old daily notes and moves the broad notes to .trash/.
 """
 from __future__ import annotations
 
@@ -195,7 +195,7 @@ def rewrite_daily_links(vault: Path, moves: dict) -> int:
 
 def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
     """Move each split note's examples to their targets (keeping date tags), delete the
-    note, re-link daily notes, then write Rules for the newly created notes."""
+    note to .trash/ after re-linking daily notes, then write Rules for the new notes."""
     res = ResplitResult()
     if not plan.splits:
         return res
@@ -213,10 +213,28 @@ def apply_resplit(vault: Path, plan: ResplitPlan, enricher) -> ResplitResult:
             res.moved += 1
         for target, items in rows.items():
             append_pattern_examples_tagged(vault, target, items)
-        s.path.unlink()
+    # Re-link before removing anything: a failure here leaves the broad notes in place,
+    # so a re-run can finish (re-appending is deduplicated).
+    moves: dict[str, dict] = {}
+    for s in plan.splits:
+        targets = {_norm(m.before): m.target for m in s.moves}
+        moves[note_name(s.pattern)] = targets
+        moves[s.path.stem] = targets  # a note renamed in Obsidian is linked by its file name
+    res.dailies = rewrite_daily_links(vault, moves)
+    for s in plan.splits:
+        _to_trash(vault, s.path)
         res.notes_split += 1
-    res.dailies = rewrite_daily_links(
-        vault, {note_name(s.pattern): {_norm(m.before): m.target for m in s.moves}
-                for s in plan.splits})
     res.enriched = enrich_pattern_notes(vault, enricher)
     return res
+
+
+def _to_trash(vault: Path, path: Path) -> None:
+    """Move a note to the vault's `.trash/` (Obsidian's own trash) instead of deleting it,
+    so hand-written content the parser didn't pick up can be recovered."""
+    trash = Path(vault) / ".trash"
+    trash.mkdir(exist_ok=True)
+    dest, n = trash / path.name, 0
+    while dest.exists():
+        n += 1
+        dest = trash / f"{path.stem} {n}{path.suffix}"
+    path.rename(dest)

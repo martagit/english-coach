@@ -110,6 +110,12 @@ def _cmd_resplit(args, config: Config, runner) -> int:
         if plan.splits:
             print("Run again with --apply to write these changes.")
         return 0
+    if not plan.splits:
+        return 0
+    # The model may answer differently on each call: confirm the plan printed above.
+    if input("Apply these changes? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("Nothing written.")
+        return 0
     r = resplit.apply_resplit(
         config.vault_path, plan, lambda items: enrich_patterns(items, runner=runner, profile=prof))
     print(f"Split {r.notes_split} note(s): moved {r.moved}, dropped {r.dropped}, "
