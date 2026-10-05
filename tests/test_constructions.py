@@ -145,3 +145,26 @@ def test_learner_notes_survive_evidence_and_enrichment(tmp_path):
     assert [q for q, _ in parsed["used"]] == ["q1", "q2"]
     assert parsed["missed"] == [("b", "a", "10-01")]
     assert "_(not yet)_" not in body and "_(nothing yet)_" not in body
+
+
+def test_missed_lines_render_inline_and_parse_back(tmp_path):
+    from english_coach.fix_markup import render_fix
+    c.ensure_construction_note(tmp_path, "unless", D, rule="r")
+    c.append_construction_evidence(tmp_path, "unless", [], [("wait if not green", "wait unless green")],
+                                   "2026-09-16_to_09-22")
+    body = read_note(tmp_path / "Constructions" / "unless.md")[1]
+    assert f"- {render_fix('wait if not green', 'wait unless green')}  · _09-16–09-22_" in body
+    assert c.parse_note_body(body)["missed"] == [("wait if not green", "wait unless green", "09-16–09-22")]
+    c.append_construction_evidence(tmp_path, "unless", [], [("wait  if not green", "wait unless green")],
+                                   "2026-10-01")
+    assert c.parse_note_body(read_note(tmp_path / "Constructions" / "unless.md")[1])["missed"] == [
+        ("wait if not green", "wait unless green", "09-16–09-22")]
+
+
+def test_reformat_construction_body_converts_only_try_it_section():
+    body = c.render_note_body("unless", "r", ["ex"], [("I said it", "10-01")], [])
+    body = body.replace("_(nothing yet)_", "- ✗ wait if not green → ✓ wait unless green  · _10-01_")
+    body += "\n\n## My notes\n- ✗ mine → ✓ untouched"
+    out = c.reformat_construction_body(body)
+    assert "- wait ~~if not~~ **unless** green  · _10-01_" in out
+    assert "- ✗ mine → ✓ untouched" in out and '- "I said it"' in out
