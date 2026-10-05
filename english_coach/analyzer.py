@@ -60,6 +60,13 @@ ANALYSIS_TOOL = {
 
 _MAX_TOKENS = 8000
 
+PATTERN_NAMING_RULE = (
+    "Name the grammar rule, not the symptom: one sentence of advice must fix every example "
+    "filed under the name (good: \"Articles\", \"Verb + preposition\", \"Relative pronouns\", "
+    "\"Linking clauses\"; too broad: \"Missing words\", \"Word choice\", \"Grammar\", "
+    "\"Wrong word\", \"Typos\")."
+)
+
 
 def system_prompt(profile: Profile) -> str:
     hint = profile.interference_hint()
@@ -97,10 +104,12 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
         "Analyze and call report_analysis. reused_phrases must be a subset of the phrasebook "
         "phrase names that the user actually reused correctly. Pick ONE highest-value focus_pattern.\n"
         "For every 'pattern' field (in focus_pattern and recurring), use the EXACT short name "
-        "from the 'Known recurring patterns' list above when it applies — copied verbatim, NOT "
-        "expanded or paraphrased into a sentence. Only coin a new short 2-4 word name (e.g. "
-        "\"Articles\", \"Question formation\") if the issue is genuinely not in that list. Put "
-        "the detailed guidance in 'explanation', never in the name.\n"
+        "from the 'Known recurring patterns' list above — copied verbatim, NOT expanded or "
+        "paraphrased into a sentence — but only when the example truly fits that pattern's "
+        "rule. Otherwise coin a new short 2-4 word name. "
+        f"{PATTERN_NAMING_RULE} Put the detailed guidance in 'explanation', never in the "
+        "name. Typos and one-off vocabulary slips are not patterns: leave them out of "
+        "focus_pattern and recurring.\n"
         f"For new_phrases: propose AT MOST {max_new_phrases}, and only if genuinely high-value "
         "for this user — an empty list is a fine answer. Never re-teach anything already in the "
         "phrasebook above, including close variants of it.\n"

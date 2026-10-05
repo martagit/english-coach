@@ -376,3 +376,15 @@ def test_parse_matches_curly_apostrophe():
     a = parse_analysis(_payload(construction_wins=[{"construction": "I’d rather", "quote": "q"}]),
                        known_constructions=["I'd rather"])
     assert [w.phrase for w in a.construction_wins] == ["I'd rather"]
+
+
+def test_prompt_names_patterns_by_rule_not_symptom():
+    from english_coach.analyzer import PATTERN_NAMING_RULE
+    text = build_analysis_prompt([UserPrompt("x y z", None)], [],
+                                 known_patterns=[("Articles", "a/an/the usage")])
+    assert PATTERN_NAMING_RULE in text
+    assert "one sentence of advice must fix every example" in PATTERN_NAMING_RULE
+    for bad in ("Missing words", "Word choice", "Grammar", "Wrong word", "Typos"):
+        assert f'"{bad}"' in PATTERN_NAMING_RULE
+    assert "only when the example truly fits that pattern's rule" in text
+    assert "Typos and one-off vocabulary slips are not patterns" in text
