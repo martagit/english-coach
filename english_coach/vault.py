@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
+from english_coach.fix_markup import parse_fix, render_fix, text_key
 from english_coach.models import Analysis, Window
 from english_coach.window import note_basename
 from english_coach.frontmatter import write_note
@@ -44,20 +46,20 @@ def render_daily_body(analysis: Analysis) -> str:
     if fp:
         lines.append(f"**{_link(fp.pattern)}** — {fp.explanation}")
         lines.append("")
-        lines.append("| before | after |")
-        lines.append("| --- | --- |")
+        lines.append("| fix |")
+        lines.append("| --- |")
         for ex in fp.examples:
-            lines.append(f"| {_cell(ex.before)} | {_cell(ex.after)} |")
+            lines.append(f"| {_cell(render_fix(ex.before, ex.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
 
     lines.append("## Recurring patterns")
     if analysis.recurring:
-        lines.append("| pattern | before | after |")
-        lines.append("| --- | --- | --- |")
+        lines.append("| pattern | fix |")
+        lines.append("| --- | --- |")
         for r in analysis.recurring:
-            lines.append(f"| {_link(r.pattern)} | {_cell(r.before)} | {_cell(r.after)} |")
+            lines.append(f"| {_link(r.pattern)} | {_cell(render_fix(r.before, r.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
@@ -80,10 +82,10 @@ def render_daily_body(analysis: Analysis) -> str:
 
     lines.append("## Try this construction")
     if analysis.missed_constructions:
-        lines.append("| construction | you wrote | try |")
-        lines.append("| --- | --- | --- |")
+        lines.append("| construction | fix |")
+        lines.append("| --- | --- |")
         for m in analysis.missed_constructions:
-            lines.append(f"| {_link(m.construction)} | {_cell(m.before)} | {_cell(m.after)} |")
+            lines.append(f"| {_link(m.construction)} | {_cell(render_fix(m.before, m.after))} |")
     else:
         lines.append("(none this time)")
     lines.append("")
@@ -102,6 +104,51 @@ def render_daily_body(analysis: Analysis) -> str:
         lines.append("- (none this time)")
 
     return "\n".join(lines)
+
+
+_CELL_SEP = re.compile(r'(?<!\\)\|')
+# Old daily table header → (new header, number of leading cells kept as they are)
+_OLD_TABLES = {("before", "after"): ("| fix |", 0),
+               ("pattern", "before", "after"): ("| pattern | fix |", 1),
+               ("construction", "you wrote", "try"): ("| construction | fix |", 1)}
+
+
+_COACH_SECTIONS = {"Focus pattern", "Recurring patterns", "Try this construction"}
+
+
+def _cells(row: str) -> list[str]:
+    return [c.strip() for c in _CELL_SEP.split(row.strip()[1:-1])]
+
+
+def reformat_daily_body(body: str) -> str:
+    """Convert old before/after daily tables (also column-aligned ones) to the inline-fix
+    columns. Every other line is left alone; already-converted tables are unchanged."""
+    out: list[str] = []
+    keep = None  # leading cells kept as they are, while inside an old table
+    section = ""
+    for line in body.split("\n"):
+        s = line.strip()
+        if s.startswith("## "):
+            section = s[3:].strip()
+        is_row = s.startswith("|") and s.endswith("|") and len(s) > 1
+        hdr = tuple(_cells(s)) if is_row else ()
+        if hdr in _OLD_TABLES and section in _COACH_SECTIONS:
+            new_header, keep = _OLD_TABLES[hdr]
+            out.append(new_header)
+            continue
+        if keep is not None and is_row:
+            cells = _cells(s)
+            if all(set(c) <= set("-: ") for c in cells):
+                out.append("| " + " | ".join(["---"] * (keep + 1)) + " |")
+            elif len(cells) == keep + 2:
+                b, a = (c.replace("\\|", "|") for c in cells[keep:])
+                out.append("| " + " | ".join(cells[:keep] + [_cell(render_fix(b, a))]) + " |")
+            else:
+                out.append(line)
+            continue
+        keep = None
+        out.append(line)
+    return "\n".join(out)
 
 
 def write_daily_note(vault: Path, window: Window, prompt_count: int, analysis: Analysis) -> Path:
@@ -148,11 +195,48 @@ def ensure_phrase_note(vault: Path, phrase: str, introduced: _date,
 _RULE_MARKER = "**Rule:**"
 _EX_HEADER = "## Before → after"
 _EX_RE = re.compile(r'^- ✗ (?P<before>.+?) → ✓ (?P<after>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
+_FIX_LINE_RE = re.compile(r'^- (?P<fix>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
+
+
+def parse_example_line(s: str) -> tuple[str, str, str] | None:
+    """(before, after, tag) from an example line in the old `✗ b → ✓ a` or the inline format."""
+    m = _EX_RE.match(s)
+    if m:
+        return m.group("before").strip(), m.group("after").strip(), m.group("tag") or ""
+    m = _FIX_LINE_RE.match(s)
+    if m and ("~~" in m.group("fix") or "**" in m.group("fix")):  # a learner's own bullet isn't one
+        b, a = parse_fix(m.group("fix"))
+        return b, a, m.group("tag") or ""
+    return None
+
+
+def example_line(before: str, after: str, tag: str) -> str:
+    t = _short_date(tag)
+    return f"- {render_fix(before, after)}" + (f"  · _{t}_" if t else "")
+
+
+def reformat_example_lines(body: str, header: str) -> str:
+    """Convert old `- ✗ b → ✓ a` lines under `header` (until the next heading) to the inline
+    format, in place. Every other line is left alone."""
+    lines = body.split("\n")
+    inside = False
+    for i, line in enumerate(lines):
+        s = line.strip()
+        if s == header:
+            inside = True
+        elif s.startswith("#"):
+            inside = False
+        elif inside and (m := _EX_RE.match(s)):
+            lines[i] = example_line(m.group("before").strip(), m.group("after").strip(),
+                                    m.group("tag") or "")
+    return "\n".join(lines)
 
 
 def _short_date(label: str) -> str:
-    m = re.match(r'^(\d{4})-(\d{2}-\d{2})$', label or "")
-    return m.group(2) if m else (label or "")
+    m = re.match(r'^\d{4}-(\d{2}-\d{2})(?:_to_(\d{2}-\d{2}))?$', label or "")
+    if not m:
+        return label or ""
+    return f"{m.group(1)}–{m.group(2)}" if m.group(2) else m.group(1)
 
 
 def _extract_rule(body: str) -> str:
@@ -169,39 +253,47 @@ def _extract_rule(body: str) -> str:
 
 
 def _parse_pattern_examples(body: str) -> list[tuple[str, str, str]]:
-    """Extract (before, after, date_tag) triples from a pattern note in either the
-    new list format or the old dated-table format. Deduplicated by (before, after)."""
+    """Extract (before, after, date_tag) triples from a pattern note: old `✗ b → ✓ a` lines,
+    inline-format lines under the examples header, or the old dated-table format.
+    Deduplicated by (before, after), ignoring whitespace."""
     pairs: list[tuple[str, str, str]] = []
     seen: set = set()
     cur_tag = ""
+    in_examples = False
+
+    def add(b, a, t):
+        k = (text_key(b), text_key(a))
+        if k not in seen:
+            seen.add(k)
+            pairs.append((b, a, t))
+
     for line in body.splitlines():
         s = line.strip()
-        m = _EX_RE.match(s)
-        if m:
-            b, a, t = m.group("before").strip(), m.group("after").strip(), (m.group("tag") or "")
-            if (b, a) not in seen:
-                seen.add((b, a))
-                pairs.append((b, a, t))
+        if s == _EX_HEADER:
+            in_examples = True
             continue
         if s.startswith("### "):
             cur_tag = _short_date(s[4:].strip())
             continue
+        if s.startswith("#"):
+            in_examples = False
+            continue
+        if _EX_RE.match(s) or (in_examples and s.startswith("- ")):
+            parsed = parse_example_line(s)
+            if parsed:
+                add(*parsed)
+            continue
         if s.startswith("|") and "---" not in s:
             cells = [c.strip() for c in s.strip("|").split("|")]
             if len(cells) == 2 and cells != ["before", "after"]:
-                b, a = cells
-                if (b, a) not in seen:
-                    seen.add((b, a))
-                    pairs.append((b, a, cur_tag))
+                add(cells[0], cells[1], cur_tag)
     return pairs
 
 
 def _render_pattern_note(pattern: str, rule: str, pairs: list[tuple[str, str, str]]) -> str:
     lines = [f"# {pattern}", "", f"{_RULE_MARKER} {rule}", "", _EX_HEADER]
     if pairs:
-        for b, a, t in pairs:
-            tag = f"  · _{t}_" if t else ""
-            lines.append(f"- ✗ {b} → ✓ {a}{tag}")
+        lines += [example_line(b, a, t) for b, a, t in pairs]
     else:
         lines.append("_(no examples yet)_")
     return "\n".join(lines)
@@ -218,22 +310,42 @@ def ensure_pattern_note(vault: Path, pattern: str, description: str = "") -> Pat
 
 def append_pattern_examples(vault: Path, pattern: str,
                             rows: list[tuple[str, str]], day_label: str) -> None:
+    tag = _short_date(day_label)
+    append_pattern_examples_tagged(vault, pattern, [(b, a, tag) for b, a in rows])
+
+
+def append_pattern_examples_tagged(vault: Path, pattern: str,
+                                   rows: list[tuple[str, str, str]]) -> None:
+    """Add (before, after, date_tag) examples, skipping ones the note already has."""
     if not rows:
         return
     path = Path(vault) / "Patterns" / f"{note_name(pattern)}.md"
     fm, body = read_note(path)
     pairs = _parse_pattern_examples(body)
-    seen = {(b, a) for b, a, _ in pairs}
-    tag = _short_date(day_label)
-    changed = False
-    for b, a in rows:
+    seen = {(text_key(b), text_key(a)) for b, a, _ in pairs}
+    new = []
+    for b, a, t in rows:
         b, a = b.strip(), a.strip()
-        if (b, a) not in seen:
-            seen.add((b, a))
-            pairs.append((b, a, tag))
-            changed = True
-    if changed:
-        write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs))
+        if (text_key(b), text_key(a)) not in seen:
+            seen.add((text_key(b), text_key(a)))
+            new.append((b, a, t))
+    if not new:
+        return
+    lines = body.split("\n")
+    try:
+        i = next(k for k, line in enumerate(lines) if line.strip() == _EX_HEADER)
+    except StopIteration:  # old dated-table note: rebuild it in the current format
+        write_note(path, fm, _render_pattern_note(pattern, _extract_rule(body), pairs + new))
+        return
+    # Insert at the end of the examples section, keeping the learner's own lines and sections.
+    j = i + 1
+    while j < len(lines) and not lines[j].strip().startswith("#"):
+        j += 1
+    while j > i + 1 and not lines[j - 1].strip():
+        j -= 1
+    kept = [line for line in lines[i + 1:j] if line.strip() != "_(no examples yet)_"]
+    lines[i + 1:j] = kept + [example_line(b, a, t) for b, a, t in new]
+    write_note(path, fm, "\n".join(lines))
 
 
 def read_known_patterns(vault: Path) -> list[tuple[str, str]]:
@@ -248,6 +360,35 @@ def read_known_patterns(vault: Path) -> list[tuple[str, str]]:
         out.append((fm.get("pattern") or path.stem,
                     "" if rule == "(rule to be added)" else rule))
     return out
+
+
+def reformat_notes(vault: Path) -> int:
+    """Bring older notes to the inline before → after format: example lines in pattern and
+    construction notes, and the before/after tables in daily notes. Deterministic and
+    idempotent; writes only files that change. Returns the number of files written."""
+    from english_coach import constructions  # local: constructions imports this module
+    jobs = (("Patterns", lambda body: reformat_example_lines(body, _EX_HEADER)),
+            ("Constructions", constructions.reformat_construction_body),
+            ("Daily", reformat_daily_body))
+    count = 0
+    for folder, convert in jobs:
+        d = Path(vault) / folder
+        if not d.is_dir():
+            continue
+        for path in sorted(d.glob("*.md")):
+            try:
+                fm, body = read_note(path)
+                new = convert(body)
+                if new == body:
+                    continue
+                if fm:
+                    write_note(path, fm, new)
+                else:
+                    path.write_text(new.strip() + "\n", encoding="utf-8")
+                count += 1
+            except Exception as exc:  # one unreadable note must not block the rest
+                print(f"Reformat skipped {folder}/{path.name}: {exc}", file=sys.stderr)
+    return count
 
 
 def write_quiet_note(vault: Path, window: Window) -> Path:

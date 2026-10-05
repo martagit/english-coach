@@ -15,6 +15,7 @@ def run(config: Config, source, analyzer, now_utc: datetime,
         override_to: date | None = None, enricher=None, pattern_enricher=None,
         include_today: bool = False, curator=None, construction_curator=None,
         construction_enricher=None) -> str:
+    _run_reformat(config.vault_path)
     is_override = override_from is not None and override_to is not None
     # Today (and explicit range reprocessing) are partial/manual → don't advance
     # the watermark, so the next scheduled run still does the authoritative pass.
@@ -68,6 +69,16 @@ def run(config: Config, source, analyzer, now_utc: datetime,
         write_watermark(config.vault_path, window.end_utc)
     print(f"Wrote report for {label} ({len(prompts)} prompts).")
     return f"wrote:{label}"
+
+
+def _run_reformat(vault_path) -> None:
+    """Fail-soft: bring older notes to the current before → after format."""
+    try:
+        n = vault.reformat_notes(vault_path)
+        if n:
+            print(f"Reformatted {n} note(s).")
+    except Exception as exc:
+        print(f"Reformat failed (skipped): {exc}", file=sys.stderr)
 
 
 def _run_enricher(enrich_notes, vault_path, enricher, kind: str) -> None:

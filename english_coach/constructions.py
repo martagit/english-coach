@@ -13,7 +13,11 @@ from pathlib import Path
 
 from english_coach.frontmatter import read_note, write_note
 from english_coach.models import Analysis, ConstructionInfo
-from english_coach.vault import _short_date, construction_key, note_name
+from english_coach.fix_markup import text_key
+from english_coach.vault import (
+    _short_date, construction_key, example_line, note_name, parse_example_line,
+    reformat_example_lines,
+)
 
 FOLDER = "Constructions"
 _RULE = "**Rule:**"
@@ -23,7 +27,6 @@ _USED = "## You used it"
 _MISSED = "## Try it next time"
 _PLACEHOLDERS = {_EXAMPLES: "_(no examples yet)_", _USED: "_(not yet)_", _MISSED: "_(nothing yet)_"}
 _USED_RE = re.compile(r'^- "(?P<quote>.+)"(?:\s+·\s+_(?P<tag>.+?)_)?$')
-_MISSED_RE = re.compile(r'^- ✗ (?P<before>.+?) → ✓ (?P<after>.+?)(?:\s+·\s+_(?P<tag>.+?)_)?$')
 
 
 def _dir(vault) -> Path:
@@ -48,7 +51,7 @@ def _used_line(q: str, t: str) -> str:
 
 
 def _missed_line(b: str, a: str, t: str) -> str:
-    return f"- ✗ {b} → ✓ {a}{_tag(t)}"
+    return example_line(b, a, t)
 
 
 def render_note_body(name, rule, examples, used, missed) -> str:
@@ -105,8 +108,8 @@ def parse_note_body(body: str) -> dict:
             examples.append(s[2:].strip())
         elif section == "used" and (m := _USED_RE.match(s)):
             used.append((m.group("quote"), m.group("tag") or ""))
-        elif section == "missed" and (m := _MISSED_RE.match(s)):
-            missed.append((m.group("before").strip(), m.group("after").strip(), m.group("tag") or ""))
+        elif section == "missed" and s.startswith("- ") and (p := parse_example_line(s)):
+            missed.append(p)
     return {"rule": rule, "examples": examples, "used": used, "missed": missed}
 
 
@@ -149,7 +152,7 @@ def append_construction_evidence(vault, name: str, used_quotes, missed_pairs, da
     p = parse_note_body(body)
     tag = _short_date(day_label)
     seen_used = {q for q, _ in p["used"]}
-    seen_missed = {(b, a) for b, a, _ in p["missed"]}
+    seen_missed = {(text_key(b), text_key(a)) for b, a, _ in p["missed"]}
     new_used, new_missed = [], []
     for q in used_quotes:
         q = q.strip()
@@ -158,8 +161,8 @@ def append_construction_evidence(vault, name: str, used_quotes, missed_pairs, da
             new_used.append(_used_line(q, tag))
     for b, a in missed_pairs:
         b, a = b.strip(), a.strip()
-        if b and a and (b, a) not in seen_missed:
-            seen_missed.add((b, a))
+        if b and a and (text_key(b), text_key(a)) not in seen_missed:
+            seen_missed.add((text_key(b), text_key(a)))
             new_missed.append(_missed_line(b, a, tag))
     if not (new_used or new_missed):
         return
@@ -170,6 +173,11 @@ def append_construction_evidence(vault, name: str, used_quotes, missed_pairs, da
     if new_missed:
         _edit_section(lines, _MISSED, new_missed, append=True)
     write_note(path, fm, "\n".join(lines))
+
+
+def reformat_construction_body(body: str) -> str:
+    """Convert old `✗ b → ✓ a` lines in "Try it next time" to the inline format, in place."""
+    return reformat_example_lines(body, _MISSED)
 
 
 def apply_construction_notes(vault, analysis: Analysis, introduced, day_label: str) -> None:

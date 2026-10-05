@@ -60,6 +60,13 @@ ANALYSIS_TOOL = {
 
 _MAX_TOKENS = 8000
 
+PATTERN_NAMING_RULE = (
+    "Name the grammar rule, not the symptom: one sentence of advice must fix every example "
+    "filed under the name (good: \"Articles\", \"Verb + preposition\", \"Relative pronouns\", "
+    "\"Linking clauses\"; too broad: \"Missing words\", \"Word choice\", \"Grammar\", "
+    "\"Wrong word\", \"Typos\")."
+)
+
 
 def system_prompt(profile: Profile) -> str:
     hint = profile.interference_hint()
@@ -97,10 +104,12 @@ def build_analysis_prompt(prompts: list[UserPrompt], phrasebook: list[PhraseInfo
         "Analyze and call report_analysis. reused_phrases must be a subset of the phrasebook "
         "phrase names that the user actually reused correctly. Pick ONE highest-value focus_pattern.\n"
         "For every 'pattern' field (in focus_pattern and recurring), use the EXACT short name "
-        "from the 'Known recurring patterns' list above when it applies — copied verbatim, NOT "
-        "expanded or paraphrased into a sentence. Only coin a new short 2-4 word name (e.g. "
-        "\"Articles\", \"Question formation\") if the issue is genuinely not in that list. Put "
-        "the detailed guidance in 'explanation', never in the name.\n"
+        "from the 'Known recurring patterns' list above — copied verbatim, NOT expanded or "
+        "paraphrased into a sentence — but only when the example truly fits that pattern's "
+        "rule. Otherwise coin a new short 2-4 word name. "
+        f"{PATTERN_NAMING_RULE} Put the detailed guidance in 'explanation', never in the "
+        "name. Typos and one-off vocabulary slips are not patterns: leave them out of "
+        "focus_pattern and recurring.\n"
         f"For new_phrases: propose AT MOST {max_new_phrases}, and only if genuinely high-value "
         "for this user — an empty list is a fine answer. Never re-teach anything already in the "
         "phrasebook above, including close variants of it.\n"
@@ -447,6 +456,55 @@ def enrich_patterns(items: list[dict], runner=None, profile: Profile = Profile()
         name = p.get("pattern")
         if name:
             out[name] = {"rule": p.get("rule", "")}
+    return out
+
+
+def build_pattern_resplit_prompt(items: list[dict], profile: Profile = Profile()) -> str:
+    """items: [{"pattern": str, "rule": str, "examples": [(before, after), ...]}]."""
+    blocks = []
+    for it in items:
+        exs = "\n".join(f'    - "{b}"  ->  "{a}"' for b, a in it.get("examples", [])) or "    (none)"
+        blocks.append(f"- {it['pattern']}\n  rule: {it.get('rule', '') or '(none)'}\n  examples:\n{exs}")
+    listing = "\n".join(blocks)
+    return (
+        f"{PATTERN_PREAMBLE} to {profile.learner()} and keep their mistake notes tidy.\n\n"
+        f"Audit the grammar pattern notes below. {PATTERN_NAMING_RULE}\n"
+        "For EACH note answer \"keep\" if all its examples share one rule. Otherwise answer "
+        "\"split\" and give EVERY example a target: the note's own name to keep it there "
+        "(do this for every example that fits the note's rule — never rename a note that "
+        "is mostly right), the name of another note below when the example truly fits its "
+        "rule, a new short 2-4 word rule name, or null to drop it (typos and one-off "
+        "vocabulary slips are not patterns).\n\n"
+        f"Notes:\n{listing}\n\n"
+        "Output ONLY a single JSON object of exactly this shape — no prose, no markdown fences:\n"
+        '{"notes":[{"pattern":"<note name verbatim>","action":"keep"},'
+        '{"pattern":"<note name verbatim>","action":"split","examples":'
+        '[{"before":"<before text verbatim>","target":"<pattern name or null>"}]}]}\n'
+        "Include EVERY note; copy names and 'before' texts verbatim so they can be matched back."
+    )
+
+
+def resplit_patterns(items: list[dict], runner=None, profile: Profile = Profile()) -> dict:
+    """Return {pattern: {before: target-or-None}} for the notes the model wants split.
+    One batched call; targets are passed through unvalidated."""
+    if not items:
+        return {}
+    runner = runner or (lambda p: run_claude_cli(p))
+    prompt = build_pattern_resplit_prompt(items, profile)
+    text = runner(prompt)
+    try:
+        payload = extract_json_object(text)
+    except (ValueError, json.JSONDecodeError):
+        text = runner(prompt + "\n\nReturn ONLY the JSON object. No other text.")
+        payload = extract_json_object(text)
+    out: dict = {}
+    for n in payload.get("notes") or []:
+        if not (isinstance(n, dict) and n.get("action") == "split"
+                and isinstance(n.get("pattern"), str)):
+            continue
+        out[n["pattern"]] = {" ".join(ex["before"].split()): ex.get("target")
+                             for ex in n.get("examples") or []
+                             if isinstance(ex, dict) and isinstance(ex.get("before"), str)}
     return out
 
 
